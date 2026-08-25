@@ -6,6 +6,11 @@ const connectDB = require("./config/db");
 
 const User = require("./models/User");
 const Officer = require("./models/Officer");
+const Criminal = require("./models/Criminal");
+const FIR = require("./models/FIR");
+const Case = require("./models/Case");
+const Evidence = require("./models/Evidence");
+const Report = require("./models/Report");
 
 const app = express();
 
