@@ -6,61 +6,57 @@ const criminalSchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         fullName: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         dateOfBirth: {
             type: Date,
-            required: true
+            required: true,
         },
 
         gender: {
             type: String,
             required: true,
-            enum: [
-                "Male",
-                "Female",
-                "Other"
-            ]
+            enum: ["Male", "Female", "Other"],
         },
 
         address: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         phoneNumber: {
             type: String,
-            trim: true
+            trim: true,
         },
 
         identificationDetails: {
             type: {
                 type: String,
-                trim: true
+                trim: true,
             },
 
             number: {
                 type: String,
-                trim: true
+                trim: true,
             },
 
             description: {
                 type: String,
-                trim: true
-            }
+                trim: true,
+            },
         },
 
         photo: {
             type: String,
-            trim: true
+            trim: true,
         },
 
         status: {
@@ -72,13 +68,13 @@ const criminalSchema = new mongoose.Schema(
                 "wanted",
                 "arrested",
                 "released",
-                "deceased"
-            ]
-        }
+                "deceased",
+            ],
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("Criminal", criminalSchema);

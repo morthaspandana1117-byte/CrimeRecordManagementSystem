@@ -15,7 +15,7 @@ const getDashboardStats = async (req, res) => {
             totalFIRs,
             totalCases,
             totalEvidence,
-            totalReports
+            totalReports,
         ] = await Promise.all([
             User.countDocuments(),
             Officer.countDocuments(),
@@ -23,7 +23,7 @@ const getDashboardStats = async (req, res) => {
             FIR.countDocuments(),
             Case.countDocuments(),
             Evidence.countDocuments(),
-            Report.countDocuments()
+            Report.countDocuments(),
         ]);
 
         res.status(200).json({
@@ -35,8 +35,8 @@ const getDashboardStats = async (req, res) => {
                 totalFIRs,
                 totalCases,
                 totalEvidence,
-                totalReports
-            }
+                totalReports,
+            },
         });
     } catch (error) {
         console.error("Dashboard stats error:", error);
@@ -44,11 +44,11 @@ const getDashboardStats = async (req, res) => {
         res.status(500).json({
             success: false,
             message: "Server error while fetching dashboard statistics",
-            error: "DASHBOARD_STATS_ERROR"
+            error: "DASHBOARD_STATS_ERROR",
         });
     }
 };
 
 module.exports = {
-    getDashboardStats
+    getDashboardStats,
 };

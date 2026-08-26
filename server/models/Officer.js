@@ -6,27 +6,27 @@ const officerSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "User",
             required: true,
-            unique: true
+            unique: true,
         },
 
         officerId: {
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         badgeNumber: {
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         name: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         rank: {
@@ -38,8 +38,8 @@ const officerSchema = new mongoose.Schema(
                 "ASI",
                 "SI",
                 "Inspector",
-                "DSP"
-            ]
+                "DSP",
+            ],
         },
 
         department: {
@@ -49,48 +49,43 @@ const officerSchema = new mongoose.Schema(
                 "Cyber Crime",
                 "Criminal Investigation",
                 "Traffic",
-                "Law and Order"
-            ]
+                "Law and Order",
+            ],
         },
 
         station: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         phoneNumber: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         address: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         joiningDate: {
             type: Date,
-            required: true
+            required: true,
         },
 
         status: {
             type: String,
             required: true,
-            enum: [
-                "active",
-                "inactive",
-                "suspended",
-                "retired"
-            ],
-            default: "active"
-        }
+            enum: ["active", "inactive", "suspended", "retired"],
+            default: "active",
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("Officer", officerSchema);

@@ -6,19 +6,19 @@ const reportSchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         caseId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Case",
-            required: true
+            required: true,
         },
 
         preparedBy: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
-            required: true
+            required: true,
         },
 
         reportType: {
@@ -29,47 +29,42 @@ const reportSchema = new mongoose.Schema(
                 "Progress Report",
                 "Final Report",
                 "Forensic Report",
-                "Court Report"
-            ]
+                "Court Report",
+            ],
         },
 
         title: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         content: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         reportDate: {
             type: Date,
-            required: true
+            required: true,
         },
 
         fileUrl: {
             type: String,
-            trim: true
+            trim: true,
         },
 
         status: {
             type: String,
             required: true,
-            enum: [
-                "Draft",
-                "Submitted",
-                "Approved",
-                "Rejected"
-            ],
-            default: "Draft"
-        }
+            enum: ["Draft", "Submitted", "Approved", "Rejected"],
+            default: "Draft",
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("Report", reportSchema);

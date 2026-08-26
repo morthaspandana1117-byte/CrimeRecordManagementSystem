@@ -4,6 +4,13 @@ const controller = require("../controllers/criminalController");
 const router = express.Router();
 
 router.use(authMiddleware);
-router.route("/").post(controller.createCriminal).get(controller.getAllCriminals);
-router.route("/:id").get(controller.getCriminalById).put(controller.updateCriminal).delete(controller.deleteCriminal);
+router
+    .route("/")
+    .post(controller.createCriminal)
+    .get(controller.getAllCriminals);
+router
+    .route("/:id")
+    .get(controller.getCriminalById)
+    .put(controller.updateCriminal)
+    .delete(controller.deleteCriminal);
 module.exports = router;

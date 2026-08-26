@@ -1,12 +1,191 @@
-const Evidence = require("../models/Evidence"); const Case = require("../models/Case"); const Officer = require("../models/Officer");
-const { isValidObjectId, isNonEmptyString, isValidDate, invalid, notFound, validateReference, handleError } = require("./controllerUtils");
-const fields = ["evidenceId", "caseId", "type", "description", "collectedBy", "collectionDate", "location", "fileUrl", "status"];
-const required = ["evidenceId", "caseId", "type", "description", "collectedBy", "collectionDate", "location", "status"];
-const populate = (query) => query.populate("caseId", "caseNo title status").populate("collectedBy", "officerId name rank department station status");
-const validate = async (res, body, partial = false) => { if (!partial && required.some((f) => body[f] === undefined || body[f] === null || body[f] === "")) return "All required evidence fields must be provided"; if ((!partial || body.description !== undefined) && !isNonEmptyString(body.description)) return "description must not be empty"; if ((!partial || body.location !== undefined) && !isNonEmptyString(body.location)) return "location must not be empty"; if ((!partial || body.collectionDate !== undefined) && !isValidDate(body.collectionDate)) return "collectionDate must be a valid date"; if (body.caseId !== undefined && !await validateReference(res, Case, body.caseId, "caseId")) return null; if (body.collectedBy !== undefined && !await validateReference(res, Officer, body.collectedBy, "collectedBy")) return null; return "OK"; };
-const createEvidence = async (req, res) => { try { const result = await validate(res, req.body); if (result !== "OK") return result ? invalid(res, result) : undefined; const record = await Evidence.create(req.body); await record.populate([{ path: "caseId", select: "caseNo title status" }, { path: "collectedBy", select: "officerId name rank department station status" }]); return res.status(201).json({ success: true, message: "Evidence created successfully", data: record }); } catch (error) { return handleError(res, error, "Create evidence error"); } };
-const getAllEvidence = async (req, res) => { try { const filter = {}; if (req.query.status) filter.status = req.query.status; if (req.query.caseId) { if (!isValidObjectId(req.query.caseId)) return invalid(res, "Invalid case ID", "INVALID_CASE_ID"); filter.caseId = req.query.caseId; } const records = await populate(Evidence.find(filter).select("-__v").sort({ collectionDate: -1 })); return res.status(200).json({ success: true, count: records.length, data: records }); } catch (error) { return handleError(res, error, "Get evidence error"); } };
-const getEvidenceById = async (req, res) => { try { if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID"); const record = await populate(Evidence.findById(req.params.id).select("-__v")); return record ? res.status(200).json({ success: true, data: record }) : notFound(res, "Evidence"); } catch (error) { return handleError(res, error, "Get evidence error"); } };
-const updateEvidence = async (req, res) => { try { if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID"); const updates = Object.fromEntries(Object.entries(req.body).filter(([key]) => fields.includes(key))); if (!Object.keys(updates).length) return invalid(res, "No valid evidence fields were provided"); const result = await validate(res, updates, true); if (result !== "OK") return result ? invalid(res, result) : undefined; const record = await populate(Evidence.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true }).select("-__v")); return record ? res.status(200).json({ success: true, message: "Evidence updated successfully", data: record }) : notFound(res, "Evidence"); } catch (error) { return handleError(res, error, "Update evidence error"); } };
-const deleteEvidence = async (req, res) => { try { if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID"); const record = await Evidence.findByIdAndDelete(req.params.id); return record ? res.status(200).json({ success: true, message: "Evidence deleted successfully", data: { id: record._id } }) : notFound(res, "Evidence"); } catch (error) { return handleError(res, error, "Delete evidence error"); } };
-module.exports = { createEvidence, getAllEvidence, getEvidenceById, updateEvidence, deleteEvidence };
+const Evidence = require("../models/Evidence");
+const Case = require("../models/Case");
+const Officer = require("../models/Officer");
+const {
+    isValidObjectId,
+    isNonEmptyString,
+    isValidDate,
+    invalid,
+    notFound,
+    validateReference,
+    handleError,
+} = require("./controllerUtils");
+const fields = [
+    "evidenceId",
+    "caseId",
+    "type",
+    "description",
+    "collectedBy",
+    "collectionDate",
+    "location",
+    "fileUrl",
+    "status",
+];
+const required = [
+    "evidenceId",
+    "caseId",
+    "type",
+    "description",
+    "collectedBy",
+    "collectionDate",
+    "location",
+    "status",
+];
+const populate = (query) =>
+    query
+        .populate("caseId", "caseNo title status")
+        .populate(
+            "collectedBy",
+            "officerId name rank department station status",
+        );
+const validate = async (res, body, partial = false) => {
+    if (
+        !partial &&
+        required.some(
+            (f) => body[f] === undefined || body[f] === null || body[f] === "",
+        )
+    )
+        return "All required evidence fields must be provided";
+    if (
+        (!partial || body.description !== undefined) &&
+        !isNonEmptyString(body.description)
+    )
+        return "description must not be empty";
+    if (
+        (!partial || body.location !== undefined) &&
+        !isNonEmptyString(body.location)
+    )
+        return "location must not be empty";
+    if (
+        (!partial || body.collectionDate !== undefined) &&
+        !isValidDate(body.collectionDate)
+    )
+        return "collectionDate must be a valid date";
+    if (
+        body.caseId !== undefined &&
+        !(await validateReference(res, Case, body.caseId, "caseId"))
+    )
+        return null;
+    if (
+        body.collectedBy !== undefined &&
+        !(await validateReference(
+            res,
+            Officer,
+            body.collectedBy,
+            "collectedBy",
+        ))
+    )
+        return null;
+    return "OK";
+};
+const createEvidence = async (req, res) => {
+    try {
+        const result = await validate(res, req.body);
+        if (result !== "OK") return result ? invalid(res, result) : undefined;
+        const record = await Evidence.create(req.body);
+        await record.populate([
+            { path: "caseId", select: "caseNo title status" },
+            {
+                path: "collectedBy",
+                select: "officerId name rank department station status",
+            },
+        ]);
+        return res
+            .status(201)
+            .json({
+                success: true,
+                message: "Evidence created successfully",
+                data: record,
+            });
+    } catch (error) {
+        return handleError(res, error, "Create evidence error");
+    }
+};
+const getAllEvidence = async (req, res) => {
+    try {
+        const filter = {};
+        if (req.query.status) filter.status = req.query.status;
+        if (req.query.caseId) {
+            if (!isValidObjectId(req.query.caseId))
+                return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
+            filter.caseId = req.query.caseId;
+        }
+        const records = await populate(
+            Evidence.find(filter).select("-__v").sort({ collectionDate: -1 }),
+        );
+        return res
+            .status(200)
+            .json({ success: true, count: records.length, data: records });
+    } catch (error) {
+        return handleError(res, error, "Get evidence error");
+    }
+};
+const getEvidenceById = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id))
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        const record = await populate(
+            Evidence.findById(req.params.id).select("-__v"),
+        );
+        return record
+            ? res.status(200).json({ success: true, data: record })
+            : notFound(res, "Evidence");
+    } catch (error) {
+        return handleError(res, error, "Get evidence error");
+    }
+};
+const updateEvidence = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id))
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        const updates = Object.fromEntries(
+            Object.entries(req.body).filter(([key]) => fields.includes(key)),
+        );
+        if (!Object.keys(updates).length)
+            return invalid(res, "No valid evidence fields were provided");
+        const result = await validate(res, updates, true);
+        if (result !== "OK") return result ? invalid(res, result) : undefined;
+        const record = await populate(
+            Evidence.findByIdAndUpdate(req.params.id, updates, {
+                new: true,
+                runValidators: true,
+            }).select("-__v"),
+        );
+        return record
+            ? res
+                  .status(200)
+                  .json({
+                      success: true,
+                      message: "Evidence updated successfully",
+                      data: record,
+                  })
+            : notFound(res, "Evidence");
+    } catch (error) {
+        return handleError(res, error, "Update evidence error");
+    }
+};
+const deleteEvidence = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id))
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        const record = await Evidence.findByIdAndDelete(req.params.id);
+        return record
+            ? res
+                  .status(200)
+                  .json({
+                      success: true,
+                      message: "Evidence deleted successfully",
+                      data: { id: record._id },
+                  })
+            : notFound(res, "Evidence");
+    } catch (error) {
+        return handleError(res, error, "Delete evidence error");
+    }
+};
+module.exports = {
+    createEvidence,
+    getAllEvidence,
+    getEvidenceById,
+    updateEvidence,
+    deleteEvidence,
+};

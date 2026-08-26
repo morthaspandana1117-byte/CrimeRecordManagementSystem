@@ -8,7 +8,7 @@ const authMiddleware = (req, res, next) => {
             return res.status(401).json({
                 success: false,
                 message: "Authentication token is required",
-                error: "TOKEN_REQUIRED"
+                error: "TOKEN_REQUIRED",
             });
         }
 
@@ -24,14 +24,14 @@ const authMiddleware = (req, res, next) => {
             return res.status(401).json({
                 success: false,
                 message: "Authentication token has expired",
-                error: "TOKEN_EXPIRED"
+                error: "TOKEN_EXPIRED",
             });
         }
 
         return res.status(401).json({
             success: false,
             message: "Invalid authentication token",
-            error: "INVALID_TOKEN"
+            error: "INVALID_TOKEN",
         });
     }
 };

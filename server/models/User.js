@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         email: {
@@ -14,30 +14,30 @@ const userSchema = new mongoose.Schema(
             required: true,
             unique: true,
             lowercase: true,
-            trim: true
+            trim: true,
         },
 
         passwordHash: {
             type: String,
-            required: true
+            required: true,
         },
 
         role: {
             type: String,
             enum: ["officer"],
             default: "officer",
-            required: true
+            required: true,
         },
 
         isActive: {
             type: Boolean,
             default: true,
-            required: true
-        }
+            required: true,
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("User", userSchema);

@@ -6,13 +6,13 @@ const evidenceSchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         caseId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Case",
-            required: true
+            required: true,
         },
 
         type: {
@@ -25,36 +25,36 @@ const evidenceSchema = new mongoose.Schema(
                 "Weapon",
                 "Physical",
                 "Digital",
-                "Other"
-            ]
+                "Other",
+            ],
         },
 
         description: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         collectedBy: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
-            required: true
+            required: true,
         },
 
         collectionDate: {
             type: Date,
-            required: true
+            required: true,
         },
 
         location: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         fileUrl: {
             type: String,
-            trim: true
+            trim: true,
         },
 
         status: {
@@ -65,14 +65,14 @@ const evidenceSchema = new mongoose.Schema(
                 "Under Examination",
                 "Verified",
                 "Submitted to Court",
-                "Disposed"
+                "Disposed",
             ],
-            default: "Collected"
-        }
+            default: "Collected",
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("Evidence", evidenceSchema);

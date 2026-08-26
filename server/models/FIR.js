@@ -6,43 +6,43 @@ const firSchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            trim: true
+            trim: true,
         },
 
         date: {
             type: Date,
-            required: true
+            required: true,
         },
 
         policeStation: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         complaint: {
             complainantName: {
                 type: String,
                 required: true,
-                trim: true
+                trim: true,
             },
 
             complainantPhone: {
                 type: String,
-                trim: true
+                trim: true,
             },
 
             complaintText: {
                 type: String,
                 required: true,
-                trim: true
-            }
+                trim: true,
+            },
         },
 
         description: {
             type: String,
             required: true,
-            trim: true
+            trim: true,
         },
 
         crimeType: {
@@ -59,48 +59,48 @@ const firSchema = new mongoose.Schema(
                 "Drug Offense",
                 "Sexual Offense",
                 "Property Crime",
-                "Other"
-            ]
+                "Other",
+            ],
         },
 
         location: {
             address: {
                 type: String,
                 required: true,
-                trim: true
+                trim: true,
             },
 
             city: {
                 type: String,
                 required: true,
-                trim: true
+                trim: true,
             },
 
             state: {
                 type: String,
                 required: true,
-                trim: true
+                trim: true,
             },
 
             pincode: {
                 type: String,
                 required: true,
-                trim: true
-            }
+                trim: true,
+            },
         },
 
         registeredBy: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
-            required: true
+            required: true,
         },
 
         criminalIds: [
             {
                 type: mongoose.Schema.Types.ObjectId,
                 ref: "Criminal",
-                required: true
-            }
+                required: true,
+            },
         ],
 
         status: {
@@ -110,14 +110,14 @@ const firSchema = new mongoose.Schema(
                 "Registered",
                 "Under Investigation",
                 "Charge Sheet Filed",
-                "Closed"
+                "Closed",
             ],
-            default: "Registered"
-        }
+            default: "Registered",
+        },
     },
     {
-        timestamps: true
-    }
+        timestamps: true,
+    },
 );
 
 module.exports = mongoose.model("FIR", firSchema);

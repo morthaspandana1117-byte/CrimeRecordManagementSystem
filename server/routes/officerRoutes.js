@@ -5,7 +5,7 @@ const {
     getAllOfficers,
     getOfficerById,
     updateOfficer,
-    deleteOfficer
+    deleteOfficer,
 } = require("../controllers/officerController");
 
 const authMiddleware = require("../middleware/authMiddleware");
