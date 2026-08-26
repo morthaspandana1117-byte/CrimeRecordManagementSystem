@@ -1,8 +1,21 @@
 require("dotenv").config();
 
+const dns = require("dns");
+
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
+
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/db");
+
+const authRoutes = require("./routes/authRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const officerRoutes = require("./routes/officerRoutes");
+const criminalRoutes = require("./routes/criminalRoutes");
+const firRoutes = require("./routes/firRoutes");
+const caseRoutes = require("./routes/caseRoutes");
+const evidenceRoutes = require("./routes/evidenceRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 
 const User = require("./models/User");
 const Officer = require("./models/Officer");
@@ -16,6 +29,15 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use("/api/auth", authRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/officers", officerRoutes);
+app.use("/api/criminals", criminalRoutes);
+app.use("/api/firs", firRoutes);
+app.use("/api/cases", caseRoutes);
+app.use("/api/evidence", evidenceRoutes);
+app.use("/api/reports", reportRoutes);
 
 connectDB();
 
