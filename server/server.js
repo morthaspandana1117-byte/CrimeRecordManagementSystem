@@ -39,7 +39,19 @@ app.use("/api/cases", caseRoutes);
 app.use("/api/evidence", evidenceRoutes);
 app.use("/api/reports", reportRoutes);
 
-connectDB();
+// Return malformed JSON errors as API responses instead of Express's HTML page.
+// This does not decode request data: clients must send valid JSON.
+app.use((error, req, res, next) => {
+    if (error?.type === "entity.parse.failed") {
+        return res.status(400).json({
+            success: false,
+            message: "Request body must be valid JSON",
+            error: "INVALID_JSON",
+        });
+    }
+
+    next(error);
+});
 
 app.get("/", (req, res) => {
     res.send("CRMS Backend is running");
@@ -47,6 +59,8 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-    console.log(`CRMS Backend running on port ${PORT}`);
+connectDB().then(() => {
+    app.listen(PORT, () => {
+        console.log(`CRMS Backend running on port ${PORT}`);
+    });
 });
