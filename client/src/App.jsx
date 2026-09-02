@@ -3,6 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './context/useAuth'
 import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
+import OfficerManagement from './pages/OfficerManagement'
 
 function HomeRedirect() {
   const { isAuthenticated, loading } = useAuth()
@@ -16,6 +17,7 @@ function App() {
       <Route path="/" element={<HomeRedirect />} />
       <Route path="/login" element={<Login />} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/officers" element={<ProtectedRoute><OfficerManagement /></ProtectedRoute>} />
       <Route path="*" element={<HomeRedirect />} />
     </Routes>
   )

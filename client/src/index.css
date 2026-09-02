@@ -17,7 +17,7 @@ button, input { font: inherit; }
 .dashboard-header { background: #102e58; box-shadow: 0 .2rem .8rem rgba(16, 46, 88, .18); color: #fff; }
 .header-kicker { color: #a9caef; font-size: .7rem; font-weight: 800; letter-spacing: .12em; }
 .header-title { color: #fff; font-size: 1.2rem; font-weight: 700; }
-.welcome-card { align-items: center; background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; display: flex; gap: 1.5rem; justify-content: space-between; padding: 1.5rem; }
+.welcome-card, .management-link-card { align-items: center; background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; display: flex; gap: 1.5rem; justify-content: space-between; padding: 1.5rem; }
 .welcome-card h2, .section-title { color: #162b4a; font-weight: 750; letter-spacing: -.02em; }
 .account-badge { background: #ecf7f0; border-radius: .65rem; color: #23653e; min-width: 7.5rem; padding: .6rem .8rem; text-align: center; }
 .account-badge span { display: block; font-size: .72rem; text-transform: uppercase; }
@@ -29,4 +29,5 @@ button, input { font: inherit; }
 .stat-label { color: #627087; font-size: .86rem; font-weight: 650; margin: 1rem 0 .25rem; }
 .stat-value { color: #172f53; font-size: 2rem; font-weight: 780; line-height: 1.1; margin: 0; }
 .dashboard-state, .page-loader { align-items: center; color: #536276; display: flex; flex-direction: column; justify-content: center; min-height: 14rem; text-align: center; }
-@media (max-width: 575.98px) { .login-panel { padding: 1.75rem; } .welcome-card { align-items: flex-start; flex-direction: column; } .account-badge { width: 100%; } }
+.officer-table-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; overflow: hidden; } .officer-form-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; padding: 1.5rem; } .status-active { background: #dff5e6; color: #19633a; } .status-inactive { background: #fbe3e3; color: #932d2d; } .status-badge { border-radius: 999px; display: inline-block; font-size: .75rem; font-weight: 700; padding: .3rem .6rem; text-transform: capitalize; } .officer-table-card table { margin-bottom: 0; } .officer-table-card th { color: #536276; font-size: .75rem; text-transform: uppercase; white-space: nowrap; } .officer-table-card td { vertical-align: middle; }
+@media (max-width: 575.98px) { .login-panel { padding: 1.75rem; } .welcome-card, .management-link-card { align-items: flex-start; flex-direction: column; } .account-badge { width: 100%; } }

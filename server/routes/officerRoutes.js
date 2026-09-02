@@ -16,6 +16,7 @@ router.post("/", authMiddleware, createOfficer);
 router.get("/", authMiddleware, getAllOfficers);
 router.get("/:id", authMiddleware, getOfficerById);
 router.put("/:id", authMiddleware, updateOfficer);
+router.patch("/:id/deactivate", authMiddleware, deleteOfficer);
 router.delete("/:id", authMiddleware, deleteOfficer);
 
 module.exports = router;

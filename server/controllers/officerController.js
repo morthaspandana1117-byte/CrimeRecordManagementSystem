@@ -33,6 +33,7 @@ const createOfficer = async (req, res) => {
         const {
             username,
             email,
+            password,
             officerId,
             badgeNumber,
             name,
@@ -48,6 +49,7 @@ const createOfficer = async (req, res) => {
         if (
             !username ||
             !email ||
+            !password ||
             !officerId ||
             !badgeNumber ||
             !name ||
@@ -94,6 +96,14 @@ const createOfficer = async (req, res) => {
             return invalid(res, "email must be valid", "INVALID_EMAIL");
         }
 
+        if (typeof password !== "string" || password.length < 8) {
+            return invalid(
+                res,
+                "password must be at least 8 characters long",
+                "INVALID_PASSWORD"
+            );
+        }
+
         if (!isValidDate(joiningDate)) {
             return invalid(
                 res,
@@ -132,7 +142,7 @@ const createOfficer = async (req, res) => {
             });
         }
 
-        const passwordHash = await bcrypt.hash(badgeNumber.trim(), 10);
+        const passwordHash = await bcrypt.hash(password, 10);
 
         session.startTransaction();
 
@@ -141,7 +151,7 @@ const createOfficer = async (req, res) => {
             email: normalizedEmail,
             passwordHash,
             role: "officer",
-            isActive: true,
+            isActive: (status || "active") === "active",
         });
 
         await user.save({ session });
@@ -194,7 +204,7 @@ const getAllOfficers = async (req, res) => {
     try {
         const officers = await Officer.find()
             .populate("userId", "username email isActive role")
-            .select("-badgeNumber -__v");
+            .select("-__v");
 
         return res.status(200).json({
             success: true,
@@ -224,7 +234,7 @@ const getOfficerById = async (req, res) => {
 
         const officer = await Officer.findById(req.params.id)
             .populate("userId", "username email isActive role")
-            .select("-badgeNumber -__v");
+            .select("-__v");
 
         if (!officer) {
             return notFound(res, "Officer");
@@ -270,10 +280,12 @@ const updateOfficer = async (req, res) => {
                 ["username", "email"].includes(key)
             )
         );
+        const password = req.body.password;
 
         if (
             !Object.keys(officerUpdates).length &&
-            !Object.keys(userUpdates).length
+            !Object.keys(userUpdates).length &&
+            password === undefined
         ) {
             return invalid(
                 res,
@@ -348,6 +360,14 @@ const updateOfficer = async (req, res) => {
             }
         }
 
+        if (password !== undefined && (typeof password !== "string" || password.length < 8)) {
+            return invalid(
+                res,
+                "password must be at least 8 characters long",
+                "INVALID_PASSWORD"
+            );
+        }
+
         const user = await User.findById(officer.userId);
 
         if (!user) {
@@ -416,14 +436,7 @@ const updateOfficer = async (req, res) => {
             });
         }
 
-        let newPasswordHash = null;
-
-        if (officerUpdates.badgeNumber) {
-            newPasswordHash = await bcrypt.hash(
-                officerUpdates.badgeNumber,
-                10
-            );
-        }
+        const newPasswordHash = password ? await bcrypt.hash(password, 10) : null;
 
         session.startTransaction();
 
@@ -434,6 +447,10 @@ const updateOfficer = async (req, res) => {
 
             if (newPasswordHash) {
                 userUpdateData.passwordHash = newPasswordHash;
+            }
+
+            if (officerUpdates.status !== undefined) {
+                userUpdateData.isActive = officerUpdates.status === "active";
             }
 
             await User.findByIdAndUpdate(
@@ -457,7 +474,7 @@ const updateOfficer = async (req, res) => {
             }
         )
             .populate("userId", "username email isActive role")
-            .select("-badgeNumber -__v");
+            .select("-__v");
 
         await session.commitTransaction();
 

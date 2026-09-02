@@ -3,27 +3,39 @@ import { getCurrentUser, loginRequest, TOKEN_STORAGE_KEY } from '../services/api
 import AuthContext from './authContext'
 
 const USER_STORAGE_KEY = 'crms_auth_user'
+const clearLegacyPersistentAuth = () => {
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY)
+    localStorage.removeItem(USER_STORAGE_KEY)
+  } catch {
+    // Session authentication continues even when browser storage is unavailable.
+  }
+}
 const readStoredUser = () => {
   try {
-    const savedUser = localStorage.getItem(USER_STORAGE_KEY)
+    const savedUser = sessionStorage.getItem(USER_STORAGE_KEY)
     return savedUser ? JSON.parse(savedUser) : null
   } catch {
-    localStorage.removeItem(USER_STORAGE_KEY)
+    sessionStorage.removeItem(USER_STORAGE_KEY)
     return null
   }
 }
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY))
+  const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_STORAGE_KEY))
   const [user, setUser] = useState(readStoredUser)
   const [loading, setLoading] = useState(true)
 
   const clearAuth = () => {
-    localStorage.removeItem(TOKEN_STORAGE_KEY)
-    localStorage.removeItem(USER_STORAGE_KEY)
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY)
+    sessionStorage.removeItem(USER_STORAGE_KEY)
     setToken(null)
     setUser(null)
   }
+
+  useEffect(() => {
+    clearLegacyPersistentAuth()
+  }, [])
 
   useEffect(() => {
     const handleUnauthorized = () => clearAuth()
@@ -41,7 +53,7 @@ export function AuthProvider({ children }) {
       try {
         const response = await getCurrentUser()
         if (!isMounted) return
-        localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.data.data))
+        sessionStorage.setItem(USER_STORAGE_KEY, JSON.stringify(response.data.data))
         setUser(response.data.data)
       } catch {
         if (isMounted) clearAuth()
@@ -56,8 +68,8 @@ export function AuthProvider({ children }) {
   const login = async (credentials) => {
     const response = await loginRequest(credentials)
     const { token: nextToken, user: nextUser } = response.data
-    localStorage.setItem(TOKEN_STORAGE_KEY, nextToken)
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser))
+    sessionStorage.setItem(TOKEN_STORAGE_KEY, nextToken)
+    sessionStorage.setItem(USER_STORAGE_KEY, JSON.stringify(nextUser))
     setToken(nextToken)
     setUser(nextUser)
     return nextUser
