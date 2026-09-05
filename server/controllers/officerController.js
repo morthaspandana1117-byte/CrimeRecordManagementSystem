@@ -26,7 +26,7 @@ const officerFields = [
     "status",
 ];
 
-const createOfficer = async (req, res) => {
+const registerOfficer = async (req, res) => {
     const session = await mongoose.startSession();
 
     try {
@@ -43,7 +43,6 @@ const createOfficer = async (req, res) => {
             phoneNumber,
             address,
             joiningDate,
-            status,
         } = req.body;
 
         if (
@@ -151,7 +150,8 @@ const createOfficer = async (req, res) => {
             email: normalizedEmail,
             passwordHash,
             role: "officer",
-            isActive: (status || "active") === "active",
+            status: "pending",
+            isActive: true,
         });
 
         await user.save({ session });
@@ -167,7 +167,7 @@ const createOfficer = async (req, res) => {
             phoneNumber: phoneNumber.trim(),
             address: address.trim(),
             joiningDate,
-            status: status || "active",
+            status: "active",
         });
 
         await officer.save({ session });
@@ -176,7 +176,7 @@ const createOfficer = async (req, res) => {
 
         return res.status(201).json({
             success: true,
-            message: "Officer created successfully",
+            message: "Registration submitted. Your account is pending admin approval.",
             data: {
                 id: officer._id,
                 officerId: officer.officerId,
@@ -184,7 +184,7 @@ const createOfficer = async (req, res) => {
                 rank: officer.rank,
                 department: officer.department,
                 station: officer.station,
-                status: officer.status,
+                status: "pending",
             },
         });
     } catch (error) {
@@ -203,7 +203,7 @@ const createOfficer = async (req, res) => {
 const getAllOfficers = async (req, res) => {
     try {
         const officers = await Officer.find()
-            .populate("userId", "username email isActive role")
+            .populate("userId", "username email isActive role status")
             .select("-__v");
 
         return res.status(200).json({
@@ -233,7 +233,7 @@ const getOfficerById = async (req, res) => {
         }
 
         const officer = await Officer.findById(req.params.id)
-            .populate("userId", "username email isActive role")
+            .populate("userId", "username email isActive role status")
             .select("-__v");
 
         if (!officer) {
@@ -473,7 +473,7 @@ const updateOfficer = async (req, res) => {
                 session,
             }
         )
-            .populate("userId", "username email isActive role")
+            .populate("userId", "username email isActive role status")
             .select("-__v");
 
         await session.commitTransaction();
@@ -495,6 +495,62 @@ const updateOfficer = async (req, res) => {
         await session.endSession();
     }
 };
+
+const setOfficerApprovalStatus = (status, message) => async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
+        }
+
+        const officer = await Officer.findById(req.params.id);
+        if (!officer) return notFound(res, "Officer");
+
+        const user = await User.findById(officer.userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Linked user account not found",
+                error: "USER_NOT_FOUND",
+            });
+        }
+
+        if (user.role !== "officer") {
+            return res.status(400).json({
+                success: false,
+                message: "Only officer accounts can be approved or rejected",
+                error: "INVALID_ACCOUNT_ROLE",
+            });
+        }
+
+        if (user.status !== "pending") {
+            return res.status(409).json({
+                success: false,
+                message: "Only pending officer registrations can be reviewed",
+                error: "OFFICER_NOT_PENDING",
+            });
+        }
+
+        user.status = status;
+        await user.save();
+
+        return res.status(200).json({
+            success: true,
+            message,
+            data: { id: officer._id, status: user.status },
+        });
+    } catch (error) {
+        return handleError(res, error, "Update officer approval status error");
+    }
+};
+
+const approveOfficer = setOfficerApprovalStatus(
+    "approved",
+    "Officer registration approved successfully",
+);
+const rejectOfficer = setOfficerApprovalStatus(
+    "rejected",
+    "Officer registration rejected successfully",
+);
 
 const deleteOfficer = async (req, res) => {
     const session = await mongoose.startSession();
@@ -558,9 +614,11 @@ const deleteOfficer = async (req, res) => {
 };
 
 module.exports = {
-    createOfficer,
+    registerOfficer,
     getAllOfficers,
     getOfficerById,
     updateOfficer,
     deleteOfficer,
+    approveOfficer,
+    rejectOfficer,
 };

@@ -4,9 +4,6 @@ import { useAuth } from '../context/useAuth'
 import { getDashboardStats } from '../services/api'
 
 const statCards = [
-  { key: 'totalUsers', label: 'System Users', icon: 'US' },
-  { key: 'totalOfficers', label: 'Officers', icon: 'OF' },
-  { key: 'totalCriminals', label: 'Criminal Records', icon: 'CR' },
   { key: 'totalFIRs', label: 'FIRs', icon: 'FI' },
   { key: 'totalCases', label: 'Cases', icon: 'CA' },
   { key: 'totalEvidence', label: 'Evidence Items', icon: 'EV' },
@@ -67,10 +64,6 @@ function Dashboard() {
         <section className="welcome-card mb-4">
           <div><p className="eyebrow mb-1">Officer account</p><h2 className="mb-1">Welcome, {user?.name || user?.username || 'Officer'}</h2><p className="mb-1 text-secondary">{user?.email || 'Email not available'}</p><p className="mb-0 text-secondary">Role: {formatRole(user?.role)}</p></div>
           {typeof user?.isActive === 'boolean' && <div className="account-badge"><span>Account status</span><strong>{user.isActive ? 'Active' : 'Inactive'}</strong></div>}
-        </section>
-        <section className="management-link-card mb-4">
-          <div><p className="eyebrow mb-1">Module 2</p><h2 className="section-title mb-1">Officer Management</h2><p className="mb-0 text-secondary">Create, update, and deactivate officer accounts.</p></div>
-          <button className="btn btn-primary" onClick={() => navigate('/officers')} type="button">Manage officers</button>
         </section>
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div><p className="eyebrow mb-1">Operational overview</p><h2 className="section-title mb-0">Record statistics</h2></div>

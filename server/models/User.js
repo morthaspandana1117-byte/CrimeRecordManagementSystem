@@ -24,8 +24,17 @@ const userSchema = new mongoose.Schema(
 
         role: {
             type: String,
-            enum: ["officer"],
+            enum: ["admin", "officer"],
             default: "officer",
+            required: true,
+        },
+
+        // This is the account approval state. Officer.status remains the
+        // operational/employment state used by the existing officer records.
+        status: {
+            type: String,
+            enum: ["pending", "approved", "rejected"],
+            default: "approved",
             required: true,
         },
 

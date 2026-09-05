@@ -26,11 +26,14 @@ api.interceptors.response.use(
 )
 
 export const loginRequest = (credentials) => api.post('/auth/login', credentials)
+export const registerOfficer = (officer) => api.post('/auth/register', officer)
 export const getCurrentUser = () => api.get('/auth/me')
 export const getDashboardStats = () => api.get('/dashboard/stats')
+export const getAdminDashboardStats = () => api.get('/dashboard/admin/stats')
 export const getOfficers = () => api.get('/officers')
-export const createOfficer = (officer) => api.post('/officers', officer)
 export const updateOfficer = (id, officer) => api.put(`/officers/${id}`, officer)
 export const deactivateOfficer = (id) => api.patch(`/officers/${id}/deactivate`)
+export const approveOfficer = (id) => api.patch(`/officers/${id}/approve`)
+export const rejectOfficer = (id) => api.patch(`/officers/${id}/reject`)
 export { TOKEN_STORAGE_KEY }
 export default api

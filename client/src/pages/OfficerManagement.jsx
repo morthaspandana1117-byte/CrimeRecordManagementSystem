@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createOfficer, deactivateOfficer, getOfficers, updateOfficer } from '../services/api'
+import { approveOfficer, deactivateOfficer, getOfficers, rejectOfficer, updateOfficer } from '../services/api'
 import { useAuth } from '../context/useAuth'
 
 const ranks = ['Constable', 'Head Constable', 'ASI', 'SI', 'Inspector', 'DSP']
@@ -42,7 +42,8 @@ function OfficerForm({ editingOfficer, formRef, onCancel, onSaved }) {
     const payload = { ...form, username: form.username.trim(), email: form.email.trim(), password: form.password || undefined }
     try {
       setSaving(true)
-      const response = isEditing ? await updateOfficer(editingOfficer._id, payload) : await createOfficer(payload)
+      if (!isEditing) return setError('Officer accounts must be created through the public registration page.')
+      const response = await updateOfficer(editingOfficer._id, payload)
       onSaved(response.data.message || (isEditing ? 'Officer updated successfully.' : 'Officer created successfully.'))
     } catch (requestError) {
       setError(requestMessage(requestError, 'Unable to save the officer.'))
@@ -105,7 +106,6 @@ function OfficerManagement() {
     if (showForm && editingOfficer) formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [showForm, editingOfficer])
 
-  const startCreate = () => { setEditingOfficer(null); setShowForm(true); setNotice('') }
   const startEdit = (officer) => { setEditingOfficer(officer); setShowForm(true); setNotice('') }
   const saved = async (message) => { setNotice(message); setShowForm(false); setEditingOfficer(null); await loadOfficers() }
   const deactivate = async (officer) => {
@@ -114,18 +114,23 @@ function OfficerManagement() {
     catch (requestError) { setError(requestMessage(requestError, 'Unable to deactivate the officer.')) }
     finally { setDeactivatingId('') }
   }
+  const review = async (officer, action) => {
+    try { setDeactivatingId(officer._id); setError(''); setNotice(''); const response = await (action === 'approve' ? approveOfficer(officer._id) : rejectOfficer(officer._id)); setNotice(response.data.message); await loadOfficers() }
+    catch (requestError) { setError(requestMessage(requestError, 'Unable to review the officer registration.')) }
+    finally { setDeactivatingId('') }
+  }
   const logOut = () => { logout(); navigate('/login', { replace: true }) }
 
   return <div className="dashboard-page">
-    <header className="dashboard-header"><div className="container d-flex align-items-center justify-content-between gap-3 py-3"><div className="d-flex align-items-center gap-3"><div className="brand-mark brand-mark-small" aria-hidden="true">CR</div><div><p className="header-kicker mb-0">CRMS</p><h1 className="header-title mb-0">Officer Management</h1></div></div><div className="d-flex gap-2"><button className="btn btn-outline-light" onClick={() => navigate('/dashboard')} type="button">Dashboard</button><button className="btn btn-outline-light" onClick={logOut} type="button">Log out</button></div></div></header>
+    <header className="dashboard-header"><div className="container d-flex align-items-center justify-content-between gap-3 py-3"><div className="d-flex align-items-center gap-3"><div className="brand-mark brand-mark-small" aria-hidden="true">CR</div><div><p className="header-kicker mb-0">CRMS</p><h1 className="header-title mb-0">Officer Management</h1></div></div><div className="d-flex gap-2"><button className="btn btn-outline-light" onClick={() => navigate('/admin/dashboard')} type="button">Dashboard</button><button className="btn btn-outline-light" onClick={logOut} type="button">Log out</button></div></div></header>
     <main className="container py-4 py-md-5">
-      <div className="d-flex align-items-end justify-content-between gap-3 mb-3"><div><p className="eyebrow mb-1">Officer Management</p><h2 className="section-title mb-0">Officers</h2></div><button className="btn btn-primary" onClick={startCreate} type="button">Create officer</button></div>
+      <div className="d-flex align-items-end justify-content-between gap-3 mb-3"><div><p className="eyebrow mb-1">Officer Management</p><h2 className="section-title mb-0">Officer registrations</h2></div></div>
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {showForm && <OfficerForm editingOfficer={editingOfficer} formRef={formRef} key={editingOfficer?._id || 'new'} onCancel={() => { setShowForm(false); setEditingOfficer(null) }} onSaved={saved} />}
       {error && <div className="alert alert-danger" role="alert">{error}</div>}
       {loading && <div className="dashboard-state" role="status"><div className="spinner-border text-primary" /><p className="mb-0">Loading officers...</p></div>}
-      {!loading && !error && officers.length === 0 && <div className="dashboard-state"><p className="mb-3">No officers have been added yet.</p><button className="btn btn-primary" onClick={startCreate} type="button">Create the first officer</button></div>}
-      {!loading && !error && officers.length > 0 && <div className="officer-table-card table-responsive"><table className="table table-hover align-middle"><thead><tr><th>Username</th><th>Officer</th><th>Contact</th><th>Rank / Department</th><th>Badge / ID</th><th>Status</th><th>Actions</th></tr></thead><tbody>{officers.map((officer) => { const active = officer.status === 'active' && officer.userId?.isActive !== false; return <tr key={officer._id}><td>{officer.userId?.username || 'Account unavailable'}</td><td>{officer.name}</td><td>{officer.userId?.email || '—'}</td><td><div>{officer.rank}</div><small className="text-secondary">{officer.department}</small></td><td><div>{officer.badgeNumber}</div><small className="text-secondary">{officer.officerId}</small></td><td><span className={`status-badge ${active ? 'status-active' : 'status-inactive'}`}>{active ? 'Active' : officer.status}</span></td><td><div className="d-flex gap-2"><button className="btn btn-sm btn-outline-primary" onClick={() => startEdit(officer)} type="button">Edit</button><button className="btn btn-sm btn-outline-danger" disabled={!active || deactivatingId === officer._id} onClick={() => deactivate(officer)} type="button">{deactivatingId === officer._id ? 'Deactivating...' : 'Deactivate'}</button></div></td></tr> })}</tbody></table></div>}
+      {!loading && !error && officers.length === 0 && <div className="dashboard-state"><p className="mb-3">No officer registrations have been submitted yet.</p></div>}
+      {!loading && !error && officers.length > 0 && <div className="officer-table-card table-responsive"><table className="table table-hover align-middle"><thead><tr><th>Username</th><th>Officer</th><th>Contact</th><th>Rank / Department</th><th>Badge / ID</th><th>Approval</th><th>Actions</th></tr></thead><tbody>{officers.map((officer) => { const approval = officer.userId?.status || 'approved'; const active = officer.status === 'active' && officer.userId?.isActive !== false; return <tr key={officer._id}><td>{officer.userId?.username || 'Account unavailable'}</td><td>{officer.name}</td><td>{officer.userId?.email || '—'}</td><td><div>{officer.rank}</div><small className="text-secondary">{officer.department}</small></td><td><div>{officer.badgeNumber}</div><small className="text-secondary">{officer.officerId}</small></td><td><span className={`status-badge status-${approval}`}>{approval}</span></td><td><div className="d-flex gap-2">{approval === 'pending' && <><button className="btn btn-sm btn-primary" disabled={deactivatingId === officer._id} onClick={() => review(officer, 'approve')} type="button">Approve</button><button className="btn btn-sm btn-outline-danger" disabled={deactivatingId === officer._id} onClick={() => review(officer, 'reject')} type="button">Reject</button></>}<button className="btn btn-sm btn-outline-primary" onClick={() => startEdit(officer)} type="button">Edit</button><button className="btn btn-sm btn-outline-danger" disabled={!active || deactivatingId === officer._id} onClick={() => deactivate(officer)} type="button">{deactivatingId === officer._id ? 'Working...' : 'Deactivate'}</button></div></td></tr> })}</tbody></table></div>}
     </main>
   </div>
 }

@@ -1,22 +1,25 @@
 const express = require("express");
 
 const {
-    createOfficer,
     getAllOfficers,
     getOfficerById,
     updateOfficer,
     deleteOfficer,
+    approveOfficer,
+    rejectOfficer,
 } = require("../controllers/officerController");
 
-const authMiddleware = require("../middleware/authMiddleware");
+const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-router.post("/", authMiddleware, createOfficer);
-router.get("/", authMiddleware, getAllOfficers);
-router.get("/:id", authMiddleware, getOfficerById);
-router.put("/:id", authMiddleware, updateOfficer);
-router.patch("/:id/deactivate", authMiddleware, deleteOfficer);
-router.delete("/:id", authMiddleware, deleteOfficer);
+router.use(authMiddleware, authorizeRoles("admin"));
+router.get("/", getAllOfficers);
+router.get("/:id", getOfficerById);
+router.put("/:id", updateOfficer);
+router.patch("/:id/approve", approveOfficer);
+router.patch("/:id/reject", rejectOfficer);
+router.patch("/:id/deactivate", deleteOfficer);
+router.delete("/:id", deleteOfficer);
 
 module.exports = router;

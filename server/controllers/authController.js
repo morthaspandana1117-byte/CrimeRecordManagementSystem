@@ -14,7 +14,10 @@ const login = async (req, res) => {
             });
         }
 
-        const user = await User.findOne({ username });
+        const identifier = username.trim();
+        const user = await User.findOne({
+            $or: [{ username: identifier }, { email: identifier.toLowerCase() }],
+        });
 
         if (!user) {
             return res.status(401).json({
@@ -45,11 +48,31 @@ const login = async (req, res) => {
             });
         }
 
+        // Existing user documents created before approval was introduced do
+        // not have this field and remain able to sign in as approved users.
+        const accountStatus = user.status || "approved";
+        if (user.role === "officer" && accountStatus === "pending") {
+            return res.status(403).json({
+                success: false,
+                message: "Your account is pending admin approval.",
+                error: "ACCOUNT_PENDING_APPROVAL",
+            });
+        }
+
+        if (user.role === "officer" && accountStatus === "rejected") {
+            return res.status(403).json({
+                success: false,
+                message: "Your account was not approved. Please contact an administrator.",
+                error: "ACCOUNT_REJECTED",
+            });
+        }
+
         const token = jwt.sign(
             {
                 userId: user._id,
                 username: user.username,
                 role: user.role,
+                status: accountStatus,
             },
             process.env.JWT_SECRET,
             {
@@ -66,6 +89,7 @@ const login = async (req, res) => {
                 username: user.username,
                 email: user.email,
                 role: user.role,
+                status: accountStatus,
             },
         });
     } catch (error) {
@@ -100,6 +124,7 @@ const getMe = async (req, res) => {
                 username: user.username,
                 email: user.email,
                 role: user.role,
+                status: user.status || "approved",
                 isActive: user.isActive,
             },
         });
