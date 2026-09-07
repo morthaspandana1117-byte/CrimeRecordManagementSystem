@@ -8,6 +8,9 @@ const isNonEmptyString = (value) =>
 const isValidDate = (value) =>
     value && !Number.isNaN(new Date(value).getTime());
 
+const isValidBatchNumber = (value) =>
+    typeof value === "string" && /^\d{6}$/.test(value.trim());
+
 const invalid = (res, message, error = "INVALID_REQUEST") =>
     res.status(400).json({ success: false, message, error });
 
@@ -96,6 +99,7 @@ module.exports = {
     isValidObjectId,
     isNonEmptyString,
     isValidDate,
+    isValidBatchNumber,
     invalid,
     notFound,
     conflict,

@@ -8,6 +8,7 @@ const {
     isValidObjectId,
     isValidDate,
     isNonEmptyString,
+    isValidBatchNumber,
     invalid,
     notFound,
     handleError,
@@ -33,9 +34,7 @@ const registerOfficer = async (req, res) => {
         const {
             username,
             email,
-            password,
             officerId,
-            badgeNumber,
             name,
             rank,
             department,
@@ -45,12 +44,18 @@ const registerOfficer = async (req, res) => {
             joiningDate,
         } = req.body;
 
+        const batchNumber =
+            typeof req.body.batchNumber === "string"
+                ? req.body.batchNumber.trim()
+                : typeof req.body.badgeNumber === "string"
+                    ? req.body.badgeNumber.trim()
+                    : "";
+
         if (
             !username ||
             !email ||
-            !password ||
+            !batchNumber ||
             !officerId ||
-            !badgeNumber ||
             !name ||
             !rank ||
             !department ||
@@ -70,7 +75,7 @@ const registerOfficer = async (req, res) => {
             username,
             email,
             officerId,
-            badgeNumber,
+            badgeNumber: batchNumber,
             name,
             rank,
             department,
@@ -95,11 +100,11 @@ const registerOfficer = async (req, res) => {
             return invalid(res, "email must be valid", "INVALID_EMAIL");
         }
 
-        if (typeof password !== "string" || password.length < 8) {
+        if (!isValidBatchNumber(batchNumber)) {
             return invalid(
                 res,
-                "password must be at least 8 characters long",
-                "INVALID_PASSWORD"
+                "Batch number must be exactly 6 digits",
+                "INVALID_BATCH_NUMBER"
             );
         }
 
@@ -129,7 +134,7 @@ const registerOfficer = async (req, res) => {
         const existingOfficer = await Officer.findOne({
             $or: [
                 { officerId: officerId.trim() },
-                { badgeNumber: badgeNumber.trim() },
+                { badgeNumber: batchNumber },
             ],
         });
 
@@ -141,7 +146,7 @@ const registerOfficer = async (req, res) => {
             });
         }
 
-        const passwordHash = await bcrypt.hash(password, 10);
+        const passwordHash = await bcrypt.hash(batchNumber, 10);
 
         session.startTransaction();
 
@@ -159,7 +164,7 @@ const registerOfficer = async (req, res) => {
         const officer = new Officer({
             userId: user._id,
             officerId: officerId.trim(),
-            badgeNumber: badgeNumber.trim(),
+            badgeNumber: batchNumber,
             name: name.trim(),
             rank,
             department,

@@ -21,6 +21,7 @@ const officerSchema = new mongoose.Schema(
             required: true,
             unique: true,
             trim: true,
+            match: [/^\d{6}$/, "Batch number must be exactly 6 digits"],
         },
 
         name: {
