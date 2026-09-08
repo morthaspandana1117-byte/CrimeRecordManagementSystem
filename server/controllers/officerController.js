@@ -103,7 +103,7 @@ const registerOfficer = async (req, res) => {
         if (!isValidBatchNumber(batchNumber)) {
             return invalid(
                 res,
-                "Batch number must be exactly 6 digits",
+                "Batch number must be exactly 6 alphanumeric characters",
                 "INVALID_BATCH_NUMBER"
             );
         }

@@ -23,8 +23,8 @@ function Register() {
     setNotice('')
 
     const batchNumber = form.batchNumber.trim()
-    if (!/^\d{6}$/.test(batchNumber)) {
-      return setError('Batch number must be exactly 6 digits.')
+    if (!/^[A-Za-z0-9]{6}$/.test(batchNumber)) {
+      return setError('Batch number must be exactly 6 alphanumeric characters.')
     }
 
     try {
@@ -51,7 +51,7 @@ function Register() {
     {error && <div className="alert alert-danger" role="alert">{error}</div>}{notice && <div className="alert alert-success" role="status">{notice}</div>}
     <form onSubmit={submit} noValidate><div className="row g-3">
       <Field label="Username" name="username" onChange={update} value={form.username} /><Field label="Email" name="email" onChange={update} type="email" value={form.email} />
-      <Field help="Exactly 6 digits." label="Batch number" name="batchNumber" onChange={update} value={form.batchNumber} /><Field label="Full name" name="name" onChange={update} value={form.name} />
+      <Field help="Exactly 6 letters or numbers." label="Batch number" name="batchNumber" onChange={update} value={form.batchNumber} /><Field label="Full name" name="name" onChange={update} value={form.name} />
       <Field label="Officer ID" name="officerId" onChange={update} value={form.officerId} />
       <Select label="Rank" name="rank" onChange={update} options={ranks} value={form.rank} /><Select label="Department" name="department" onChange={update} options={departments} value={form.department} />
       <Field label="Station" name="station" onChange={update} value={form.station} /><Field label="Phone number" name="phoneNumber" onChange={update} value={form.phoneNumber} />

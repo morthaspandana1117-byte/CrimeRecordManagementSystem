@@ -26,6 +26,8 @@ api.interceptors.response.use(
 )
 
 export const loginRequest = (credentials) => api.post('/auth/login', credentials)
+export const forgotPasswordRequest = (email) => api.post('/auth/forgot-password', { email })
+export const resetPasswordRequest = (token, passwords) => api.post(`/auth/reset-password/${encodeURIComponent(token)}`, passwords)
 export const registerOfficer = (officer) => api.post('/auth/register', officer)
 export const getCurrentUser = () => api.get('/auth/me')
 export const getDashboardStats = () => api.get('/dashboard/stats')

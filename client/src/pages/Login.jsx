@@ -72,6 +72,7 @@ function Login() {
             {isSubmitting ? <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Signing in...</> : 'Sign in securely'}
           </button>
         </form>
+        <p className="mb-0 mt-3 text-center"><Link to="/forgot-password">Forgot Password?</Link></p>
         <p className="mb-0 mt-4 text-center text-secondary">Don&apos;t have an account? <Link to="/register">Register</Link></p>
       </section>
     </main>
