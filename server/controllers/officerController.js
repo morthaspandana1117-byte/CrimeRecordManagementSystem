@@ -24,8 +24,85 @@ const officerFields = [
     "phoneNumber",
     "address",
     "joiningDate",
-    "status",
 ];
+
+const normalizeOfficerSearchValue = (value) => {
+    if (typeof value !== "string") {
+        return "";
+    }
+
+    return value.trim().toLowerCase();
+};
+
+const normalizeApprovalStatus = (value) => {
+    const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+
+    return ["pending", "approved", "rejected"].includes(normalized) ? normalized : null;
+};
+
+const normalizeAccountStatus = (value) => {
+    const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+
+    return ["active", "inactive"].includes(normalized) ? normalized : null;
+};
+
+const validateOfficerAccountStatus = (value) => normalizeAccountStatus(value) !== null;
+
+const buildOfficerFilters = ({ search, approvalStatus, accountStatus } = {}) => {
+    const filters = {};
+    const normalizedSearch = normalizeOfficerSearchValue(search);
+
+    if (normalizedSearch) {
+        filters.search = normalizedSearch;
+        filters.searchRegex = new RegExp(normalizedSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    }
+
+    const normalizedApprovalStatus = normalizeApprovalStatus(approvalStatus);
+    if (normalizedApprovalStatus) {
+        filters.approvalStatus = normalizedApprovalStatus;
+    }
+
+    const normalizedAccountStatus = normalizeAccountStatus(accountStatus);
+    if (normalizedAccountStatus) {
+        filters.accountStatus = normalizedAccountStatus;
+    }
+
+    return filters;
+};
+
+const validateOfficerQueryFilters = (query = {}) => {
+    const invalidApprovalStatus = query.approvalStatus && !normalizeApprovalStatus(query.approvalStatus);
+    const invalidAccountStatus = query.accountStatus && !normalizeAccountStatus(query.accountStatus);
+
+    if (invalidApprovalStatus || invalidAccountStatus) {
+        return {
+            valid: false,
+            message: invalidApprovalStatus
+                ? "approvalStatus must be one of: pending, approved, rejected"
+                : "accountStatus must be one of: active, inactive",
+            error: invalidApprovalStatus ? "INVALID_APPROVAL_STATUS" : "INVALID_ACCOUNT_STATUS",
+        };
+    }
+
+    return {
+        valid: true,
+        filters: buildOfficerFilters(query),
+    };
+};
+
+const buildOfficerSearchMatch = (officer, searchRegex) => {
+    if (!searchRegex) {
+        return true;
+    }
+
+    const userName = officer.userId?.username || "";
+    return [
+        officer.name,
+        officer.officerId,
+        officer.badgeNumber,
+        userName,
+    ].some((field) => field && searchRegex.test(String(field)));
+};
 
 const registerOfficer = async (req, res) => {
     const session = await mongoose.startSession();
@@ -207,9 +284,32 @@ const registerOfficer = async (req, res) => {
 
 const getAllOfficers = async (req, res) => {
     try {
-        const officers = await Officer.find()
+        const queryValidation = validateOfficerQueryFilters(req.query);
+        if (!queryValidation.valid) {
+            return res.status(400).json({
+                success: false,
+                message: queryValidation.message,
+                error: queryValidation.error,
+            });
+        }
+
+        const { search, approvalStatus, accountStatus, searchRegex } = queryValidation.filters;
+
+        let officers = await Officer.find()
             .populate("userId", "username email isActive role status")
             .select("-__v");
+
+        if (searchRegex) {
+            officers = officers.filter((officer) => buildOfficerSearchMatch(officer, searchRegex));
+        }
+
+        if (approvalStatus) {
+            officers = officers.filter((officer) => (officer.userId?.status || "approved") === approvalStatus);
+        }
+
+        if (accountStatus) {
+            officers = officers.filter((officer) => Boolean(officer.userId?.isActive) === (accountStatus === "active"));
+        }
 
         return res.status(200).json({
             success: true,
@@ -365,10 +465,10 @@ const updateOfficer = async (req, res) => {
             }
         }
 
-        if (password !== undefined && (typeof password !== "string" || password.length < 8)) {
+        if (password !== undefined && (typeof password !== "string" || password.length < 6)) {
             return invalid(
                 res,
-                "password must be at least 8 characters long",
+                "password must be at least 6 characters long",
                 "INVALID_PASSWORD"
             );
         }
@@ -446,16 +546,10 @@ const updateOfficer = async (req, res) => {
         session.startTransaction();
 
         if (Object.keys(userUpdates).length || newPasswordHash) {
-            const userUpdateData = {
-                ...userUpdates,
-            };
+            const userUpdateData = { ...userUpdates };
 
             if (newPasswordHash) {
                 userUpdateData.passwordHash = newPasswordHash;
-            }
-
-            if (officerUpdates.status !== undefined) {
-                userUpdateData.isActive = officerUpdates.status === "active";
             }
 
             await User.findByIdAndUpdate(
@@ -548,6 +642,92 @@ const setOfficerApprovalStatus = (status, message) => async (req, res) => {
     }
 };
 
+const getAssignableOfficers = async (req, res) => {
+    try {
+        const officers = await Officer.find()
+            .populate("userId", "username email isActive role status")
+            .select("-__v");
+
+        const assignableOfficers = officers.filter((officer) => {
+            const user = officer.userId;
+            return (
+                user &&
+                user.role === "officer" &&
+                user.status === "approved" &&
+                user.isActive === true &&
+                officer.status === "active"
+            );
+        }).map((officer) => ({
+            _id: officer._id,
+            name: officer.name,
+            username: officer.userId?.username,
+            badgeNumber: officer.badgeNumber,
+            officerId: officer.officerId,
+            rank: officer.rank,
+            department: officer.department,
+            station: officer.station,
+        }));
+
+        return res.status(200).json({
+            success: true,
+            count: assignableOfficers.length,
+            data: assignableOfficers,
+        });
+    } catch (error) {
+        console.error("Get assignable officers error:", error);
+        return handleError(res, error, "Get assignable officers error");
+    }
+};
+
+const updateOfficerAccountStatus = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
+        }
+
+        const officer = await Officer.findById(req.params.id);
+        if (!officer) {
+            return notFound(res, "Officer");
+        }
+
+        const accountStatus = normalizeAccountStatus(req.body?.accountStatus);
+        if (!accountStatus) {
+            return invalid(
+                res,
+                "accountStatus must be either 'active' or 'inactive'",
+                "INVALID_ACCOUNT_STATUS",
+            );
+        }
+
+        const user = await User.findById(officer.userId);
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "Linked user account not found",
+                error: "USER_NOT_FOUND",
+            });
+        }
+
+        officer.status = accountStatus;
+        user.isActive = accountStatus === "active";
+
+        await officer.save();
+        await user.save();
+
+        return res.status(200).json({
+            success: true,
+            message: `Officer account ${accountStatus === "active" ? "activated" : "deactivated"} successfully`,
+            data: {
+                id: officer._id,
+                accountStatus: user.isActive ? "active" : "inactive",
+                approvalStatus: user.status || "approved",
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Update officer account status error");
+    }
+};
+
 const approveOfficer = setOfficerApprovalStatus(
     "approved",
     "Officer registration approved successfully",
@@ -626,4 +806,12 @@ module.exports = {
     deleteOfficer,
     approveOfficer,
     rejectOfficer,
+    getAssignableOfficers,
+    updateOfficerAccountStatus,
+    normalizeOfficerSearchValue,
+    normalizeApprovalStatus,
+    normalizeAccountStatus,
+    validateOfficerAccountStatus,
+    buildOfficerFilters,
+    validateOfficerQueryFilters,
 };

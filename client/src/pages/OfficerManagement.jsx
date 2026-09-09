@@ -31,12 +31,12 @@ function OfficerForm({ editingOfficer, formRef, onCancel, onSaved }) {
   const submit = async (event) => {
     event.preventDefault()
     setError('')
-    if (!isEditing && form.password.length < 8) {
-      setError('Password must be at least 8 characters long.')
+    if (!isEditing && form.password.length < 6) {
+      setError('Password must be at least 6 characters long.')
       return
     }
-    if (isEditing && form.password && form.password.length < 8) {
-      setError('New password must be at least 8 characters long.')
+    if (isEditing && form.password && form.password.length < 6) {
+      setError('New password must be at least 6 characters long.')
       return
     }
     const payload = { ...form, username: form.username.trim(), email: form.email.trim(), password: form.password || undefined }
@@ -59,7 +59,7 @@ function OfficerForm({ editingOfficer, formRef, onCancel, onSaved }) {
       <div className="row g-3">
         <Field label="Username" name="username" onChange={changeField} value={form.username} />
         <Field label="Email" name="email" onChange={changeField} type="email" value={form.email} />
-        <Field help={isEditing ? 'Leave blank to keep the current password.' : 'At least 8 characters.'} label={isEditing ? 'New password (optional)' : 'Password'} name="password" onChange={changeField} required={!isEditing} type="password" value={form.password} />
+        <Field help={isEditing ? 'Leave blank to keep the current password.' : 'At least 6 characters.'} label={isEditing ? 'New password (optional)' : 'Password'} name="password" onChange={changeField} required={!isEditing} type="password" value={form.password} />
         <Field label="Full name" name="name" onChange={changeField} value={form.name} />
         <Field label="Officer ID" name="officerId" onChange={changeField} value={form.officerId} />
         <Field label="Badge number" name="badgeNumber" onChange={changeField} value={form.badgeNumber} />
