@@ -1,10 +1,13 @@
 import axios from 'axios'
 
 const TOKEN_STORAGE_KEY = 'crms_auth_token'
+const DEFAULT_API_BASE_URL = typeof window !== 'undefined'
+  ? `http://${window.location.hostname}:5000/api`
+  : 'http://localhost:5000/api'
 
 const api = axios.create({
-  // The server defaults to port 5000. A VITE_API_BASE_URL value can override it.
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  // In local development, prefer the current machine hostname so devices on the same LAN can reach the backend.
+  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 

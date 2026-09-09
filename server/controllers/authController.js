@@ -60,8 +60,8 @@ const resetPassword = async (req, res) => {
     if (password !== confirmPassword) {
         return res.status(400).json({ success: false, message: "Passwords do not match", error: "PASSWORD_MISMATCH" });
     }
-    if (password.length < 8) {
-        return res.status(400).json({ success: false, message: "Password must be at least 8 characters", error: "WEAK_PASSWORD" });
+    if (password.length < 6) {
+        return res.status(400).json({ success: false, message: "Password must be at least 6 characters", error: "WEAK_PASSWORD" });
     }
 
     try {
