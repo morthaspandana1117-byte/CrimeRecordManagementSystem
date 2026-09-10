@@ -51,6 +51,7 @@ function Dashboard() {
   }
 
   const allCountsAreZero = stats && statCards.every(({ key }) => stats[key] === 0)
+  const isAdmin = user?.role === 'admin'
 
   return (
     <div className="dashboard-page">
@@ -68,10 +69,10 @@ function Dashboard() {
           <div><p className="eyebrow mb-1">Officer account</p><h2 className="mb-1">Welcome, {user?.name || user?.username || 'Officer'}</h2><p className="mb-1 text-secondary">{user?.email || 'Email not available'}</p><p className="mb-0 text-secondary">Role: {formatRole(user?.role)}</p></div>
           {typeof user?.isActive === 'boolean' && <div className="account-badge"><span>Account status</span><strong>{user.isActive ? 'Active' : 'Inactive'}</strong></div>}
         </section>
-        <section className="management-link-card mb-4">
+        {isAdmin && <section className="management-link-card mb-4">
           <div><p className="eyebrow mb-1">Module 2</p><h2 className="section-title mb-1">Officer Management</h2><p className="mb-0 text-secondary">Create, update, and deactivate officer accounts.</p></div>
           <button className="btn btn-primary" onClick={() => navigate('/officers')} type="button">Manage officers</button>
-        </section>
+        </section>}
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div><p className="eyebrow mb-1">Operational overview</p><h2 className="section-title mb-0">Record statistics</h2></div>
           <button className="btn btn-outline-primary" disabled={loading} onClick={loadStats} type="button">Refresh</button>
