@@ -7,6 +7,7 @@ const firSchema = new mongoose.Schema(
             required: true,
             unique: true,
             trim: true,
+            index: true,
         },
 
         date: {
@@ -93,6 +94,7 @@ const firSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
             required: true,
+            index: true,
         },
 
         criminalIds: [
@@ -107,12 +109,13 @@ const firSchema = new mongoose.Schema(
             type: String,
             required: true,
             enum: [
+                "Open",
                 "Registered",
                 "Under Investigation",
                 "Charge Sheet Filed",
                 "Closed",
             ],
-            default: "Registered",
+            default: "Open",
         },
     },
     {

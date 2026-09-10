@@ -56,6 +56,14 @@ const validateReferences = async (res, Model, values, field) => {
         );
         return false;
     }
+    if (new Set(values.map((value) => String(value))).size !== values.length) {
+        invalid(
+            res,
+            `${field} contains duplicate values`,
+            `INVALID_${field.toUpperCase()}_REFERENCE`,
+        );
+        return false;
+    }
     if (values.some((value) => !isValidObjectId(value))) {
         invalid(
             res,
