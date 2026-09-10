@@ -1,10 +1,13 @@
 import axios from 'axios'
 
 const TOKEN_STORAGE_KEY = 'crms_auth_token'
+const DEFAULT_API_BASE_URL = typeof window !== 'undefined'
+  ? `http://${window.location.hostname}:5000/api`
+  : 'http://localhost:5000/api'
 
 const api = axios.create({
-  // The server defaults to port 5000. A VITE_API_BASE_URL value can override it.
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api',
+  // In local development, prefer the current machine hostname so devices on the same LAN can reach the backend.
+  baseURL: import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -26,11 +29,16 @@ api.interceptors.response.use(
 )
 
 export const loginRequest = (credentials) => api.post('/auth/login', credentials)
+export const forgotPasswordRequest = (email) => api.post('/auth/forgot-password', { email })
+export const resetPasswordRequest = (token, passwords) => api.post(`/auth/reset-password/${encodeURIComponent(token)}`, passwords)
+export const registerOfficer = (officer) => api.post('/auth/register', officer)
 export const getCurrentUser = () => api.get('/auth/me')
 export const getDashboardStats = () => api.get('/dashboard/stats')
+export const getAdminDashboardStats = () => api.get('/dashboard/admin/stats')
 export const getOfficers = () => api.get('/officers')
-export const createOfficer = (officer) => api.post('/officers', officer)
 export const updateOfficer = (id, officer) => api.put(`/officers/${id}`, officer)
 export const deactivateOfficer = (id) => api.patch(`/officers/${id}/deactivate`)
+export const approveOfficer = (id) => api.patch(`/officers/${id}/approve`)
+export const rejectOfficer = (id) => api.patch(`/officers/${id}/reject`)
 export { TOKEN_STORAGE_KEY }
 export default api

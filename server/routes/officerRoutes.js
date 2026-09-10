@@ -1,23 +1,29 @@
 const express = require("express");
 
 const {
-    createOfficer,
     getAllOfficers,
     getOfficerById,
     updateOfficer,
     deleteOfficer,
+    approveOfficer,
+    rejectOfficer,
+    getAssignableOfficers,
+    updateOfficerAccountStatus,
 } = require("../controllers/officerController");
 
-const authMiddleware = require("../middleware/authMiddleware");
-const authorizeRoles = require("../middleware/authorizeRoles");
+const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-router.post("/", authMiddleware, authorizeRoles("admin"), createOfficer);
-router.get("/", authMiddleware, authorizeRoles("admin"), getAllOfficers);
-router.get("/:id", authMiddleware, authorizeRoles("admin"), getOfficerById);
-router.put("/:id", authMiddleware, authorizeRoles("admin"), updateOfficer);
-router.patch("/:id/deactivate", authMiddleware, authorizeRoles("admin"), deleteOfficer);
-router.delete("/:id", authMiddleware, authorizeRoles("admin"), deleteOfficer);
+router.use(authMiddleware, authorizeRoles("admin"));
+router.get("/assignable", getAssignableOfficers);
+router.get("/", getAllOfficers);
+router.get("/:id", getOfficerById);
+router.put("/:id", updateOfficer);
+router.patch("/:id/approve", approveOfficer);
+router.patch("/:id/reject", rejectOfficer);
+router.patch("/:id/status", updateOfficerAccountStatus);
+router.patch("/:id/deactivate", deleteOfficer);
+router.delete("/:id", deleteOfficer);
 
 module.exports = router;

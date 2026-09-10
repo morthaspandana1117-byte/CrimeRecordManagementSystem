@@ -6,20 +6,10 @@ const Case = require("../models/Case");
 const Evidence = require("../models/Evidence");
 const Report = require("../models/Report");
 
-const getDashboardStats = async (req, res) => {
+const getOfficerDashboardStats = async (req, res) => {
     try {
-        const [
-            totalUsers,
-            totalOfficers,
-            totalCriminals,
-            totalFIRs,
-            totalCases,
-            totalEvidence,
-            totalReports,
-        ] = await Promise.all([
-            User.countDocuments(),
-            Officer.countDocuments(),
-            Criminal.countDocuments(),
+        const [totalFIRs, totalCases, totalEvidence, totalReports] =
+            await Promise.all([
             FIR.countDocuments(),
             Case.countDocuments(),
             Evidence.countDocuments(),
@@ -29,9 +19,6 @@ const getDashboardStats = async (req, res) => {
         res.status(200).json({
             success: true,
             data: {
-                totalUsers,
-                totalOfficers,
-                totalCriminals,
                 totalFIRs,
                 totalCases,
                 totalEvidence,
@@ -49,6 +36,52 @@ const getDashboardStats = async (req, res) => {
     }
 };
 
+const getAdminDashboardStats = async (req, res) => {
+    try {
+        const [
+            totalUsers,
+            totalOfficers,
+            totalCriminals,
+            totalFIRs,
+            totalCases,
+            totalEvidence,
+            totalReports,
+            pendingOfficers,
+        ] = await Promise.all([
+            User.countDocuments(),
+            Officer.countDocuments(),
+            Criminal.countDocuments(),
+            FIR.countDocuments(),
+            Case.countDocuments(),
+            Evidence.countDocuments(),
+            Report.countDocuments(),
+            User.countDocuments({ role: "officer", status: "pending" }),
+        ]);
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                totalUsers,
+                totalOfficers,
+                totalCriminals,
+                totalFIRs,
+                totalCases,
+                totalEvidence,
+                totalReports,
+                pendingOfficers,
+            },
+        });
+    } catch (error) {
+        console.error("Admin dashboard stats error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Server error while fetching dashboard statistics",
+            error: "DASHBOARD_STATS_ERROR",
+        });
+    }
+};
+
 module.exports = {
-    getDashboardStats,
+    getOfficerDashboardStats,
+    getAdminDashboardStats,
 };

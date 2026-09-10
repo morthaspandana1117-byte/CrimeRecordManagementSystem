@@ -8,6 +8,9 @@ const isNonEmptyString = (value) =>
 const isValidDate = (value) =>
     value && !Number.isNaN(new Date(value).getTime());
 
+const isValidBatchNumber = (value) =>
+    typeof value === "string" && /^[A-Za-z0-9]{6}$/.test(value.trim());
+
 const invalid = (res, message, error = "INVALID_REQUEST") =>
     res.status(400).json({ success: false, message, error });
 
@@ -50,6 +53,14 @@ const validateReferences = async (res, Model, values, field) => {
             res,
             `${field} must be a non-empty array`,
             `INVALID_${field.toUpperCase()}`,
+        );
+        return false;
+    }
+    if (new Set(values.map((value) => String(value))).size !== values.length) {
+        invalid(
+            res,
+            `${field} contains duplicate values`,
+            `INVALID_${field.toUpperCase()}_REFERENCE`,
         );
         return false;
     }
@@ -96,6 +107,7 @@ module.exports = {
     isValidObjectId,
     isNonEmptyString,
     isValidDate,
+    isValidBatchNumber,
     invalid,
     notFound,
     conflict,

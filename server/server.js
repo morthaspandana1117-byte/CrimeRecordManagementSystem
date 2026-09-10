@@ -58,9 +58,10 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+const HOST = process.env.HOST || "0.0.0.0";
 
 connectDB().then(() => {
-    app.listen(PORT, () => {
-        console.log(`CRMS Backend running on port ${PORT}`);
+    app.listen(PORT, HOST, () => {
+        console.log(`CRMS Backend running on http://${HOST}:${PORT}`);
     });
 });

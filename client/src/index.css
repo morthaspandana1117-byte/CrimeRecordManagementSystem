@@ -3,7 +3,7 @@
 body { margin: 0; min-width: 320px; }
 button, input { font: inherit; }
 .login-page { align-items: center; background: radial-gradient(circle at top right, #285eaf 0, #10274b 42%, #09172e 100%); display: flex; justify-content: center; min-height: 100vh; padding: 1.5rem; }
-.login-panel { background: #fff; border-radius: 1rem; box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, .28); max-width: 31rem; padding: 2.5rem; width: 100%; }
+.login-panel { background: #fff; border-radius: 1rem; box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, .28); max-width: 31rem; padding: 2.5rem; width: 100%; } .register-panel { max-width: 48rem; }
 .brand-mark { align-items: center; background: #123d77; border-radius: .75rem; color: #fff; display: inline-flex; font-size: 1.05rem; font-weight: 800; height: 3rem; justify-content: center; letter-spacing: .05em; margin-bottom: 1.5rem; width: 3rem; }
 .brand-mark-small { height: 2.5rem; margin: 0; width: 2.5rem; }
 .eyebrow { color: #3567a9; font-size: .76rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }

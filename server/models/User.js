@@ -22,10 +22,29 @@ const userSchema = new mongoose.Schema(
             required: true,
         },
 
+        passwordResetToken: {
+            type: String,
+            select: false,
+        },
+
+        passwordResetExpires: {
+            type: Date,
+            select: false,
+        },
+
         role: {
             type: String,
             enum: ["admin", "officer"],
             default: "officer",
+            required: true,
+        },
+
+        // This is the account approval state. Officer.status remains the
+        // operational/employment state used by the existing officer records.
+        status: {
+            type: String,
+            enum: ["pending", "approved", "rejected"],
+            default: "approved",
             required: true,
         },
 

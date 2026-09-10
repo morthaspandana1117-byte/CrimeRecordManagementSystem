@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 
 const getLoginError = (error) => {
@@ -8,19 +8,24 @@ const getLoginError = (error) => {
 }
 
 function Login() {
-  const { login, isAuthenticated, loading } = useAuth()
+  const { login, isAuthenticated, loading, user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [form, setForm] = useState({ username: '', password: '' })
   const [error, setError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const destination = location.state?.from?.pathname || '/dashboard'
+  const destinationFor = (authenticatedUser) => {
+    const requested = location.state?.from?.pathname
+    const defaultDestination = authenticatedUser.role === 'admin' ? '/admin/dashboard' : '/dashboard'
+    const requestedIsAllowed = (authenticatedUser.role === 'admin' && requested === '/admin/dashboard') || (authenticatedUser.role === 'officer' && requested === '/dashboard')
+    return requestedIsAllowed ? requested : defaultDestination
+  }
 
   if (loading) {
     return <main className="page-loader" aria-label="Checking your session"><div className="spinner-border text-primary" role="status" /><span className="mt-3">Checking your secure session...</span></main>
   }
 
-  if (!loading && isAuthenticated) return <Navigate to="/dashboard" replace />
+  if (!loading && isAuthenticated) return <Navigate to={user?.role === 'admin' ? '/admin/dashboard' : '/dashboard'} replace />
 
   const handleChange = (event) => {
     const { name, value } = event.target
@@ -37,8 +42,8 @@ function Login() {
     }
     try {
       setIsSubmitting(true)
-      await login({ username, password: form.password })
-      navigate(destination, { replace: true })
+      const authenticatedUser = await login({ username, password: form.password })
+      navigate(destinationFor(authenticatedUser), { replace: true })
     } catch (requestError) {
       setError(getLoginError(requestError))
     } finally {
@@ -56,8 +61,8 @@ function Login() {
         {error && <div className="alert alert-danger" role="alert">{error}</div>}
         <form onSubmit={handleSubmit} noValidate>
           <div className="mb-3">
-            <label className="form-label" htmlFor="username">Username</label>
-            <input autoComplete="username" className="form-control form-control-lg" disabled={isSubmitting} id="username" name="username" onChange={handleChange} placeholder="Enter your username" required value={form.username} />
+            <label className="form-label" htmlFor="username">Username or email</label>
+            <input autoComplete="username" className="form-control form-control-lg" disabled={isSubmitting} id="username" name="username" onChange={handleChange} placeholder="Enter your username or email" required value={form.username} />
           </div>
           <div className="mb-4">
             <label className="form-label" htmlFor="password">Password</label>
@@ -67,6 +72,8 @@ function Login() {
             {isSubmitting ? <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Signing in...</> : 'Sign in securely'}
           </button>
         </form>
+        <p className="mb-0 mt-3 text-center"><Link to="/forgot-password">Forgot Password?</Link></p>
+        <p className="mb-0 mt-4 text-center text-secondary">Don&apos;t have an account? <Link to="/register">Register</Link></p>
       </section>
     </main>
   )
