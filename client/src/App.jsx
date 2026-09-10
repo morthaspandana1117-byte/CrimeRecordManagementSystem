@@ -4,6 +4,8 @@ import { useAuth } from './context/useAuth'
 import Dashboard from './pages/Dashboard'
 import AdminDashboard from './pages/AdminDashboard'
 import Login from './pages/Login'
+import OfficerDetails from './pages/OfficerDetails'
+import OfficerEdit from './pages/OfficerEdit'
 import OfficerManagement from './pages/OfficerManagement'
 import Register from './pages/Register'
 import ForgotPassword from './pages/ForgotPassword'
@@ -26,6 +28,8 @@ function App() {
       <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['officer']}><Dashboard /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedRoles={['admin']}><OfficerManagement /></ProtectedRoute>} />
+      <Route path="/officers/:id" element={<ProtectedRoute allowedRoles={['admin']}><OfficerDetails /></ProtectedRoute>} />
+      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedRoles={['admin']}><OfficerEdit /></ProtectedRoute>} />
       <Route path="*" element={<HomeRedirect />} />
     </Routes>
   )
