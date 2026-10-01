@@ -47,7 +47,8 @@ test('buildCaseQueryFilters combines search and filters correctly', () => {
   assert.equal(query.valid, true);
   assert.equal(query.filter.status, 'Open');
   assert.equal(query.filter.priority, 'High');
-  assert.equal(query.filter.$or.length, 2);
+  assert.equal(query.filter.$or.length, 3);
+  assert.deepEqual(query.filter.$or[0], { caseNo: { $regex: 'robbery', $options: 'i' } });
 });
 
 test('validateCase rejects missing required values and invalid status', async () => {

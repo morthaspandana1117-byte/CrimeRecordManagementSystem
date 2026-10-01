@@ -86,12 +86,21 @@ const validateReferences = async (res, Model, values, field) => {
 
 const handleError = (res, error, context) => {
     console.error(`${context}:`, error);
-    if (error.code === 11000)
+    if (error.code === 11000) {
+        const duplicateMessage = error.message?.toLowerCase() || "";
+        if (duplicateMessage.includes("criminalid")) {
+            return conflict(
+                res,
+                "Criminal ID already exists",
+                "CRIMINAL_ID_ALREADY_EXISTS",
+            );
+        }
         return conflict(
             res,
             "A record with a unique field already exists",
             "DUPLICATE_RECORD",
         );
+    }
     if (error.name === "ValidationError" || error.name === "CastError")
         return invalid(res, error.message, "VALIDATION_ERROR");
     return res

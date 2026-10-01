@@ -58,3 +58,22 @@ test('validateCriminal rejects missing required values', () => {
 
   assert.equal(missingStatus, 'All required criminal fields must be provided');
 });
+
+test('validateCriminal rejects future date of birth values', () => {
+  const futureDob = validateCriminal({
+    criminalId: 'CR-1002',
+    fullName: 'Asha Verma',
+    dateOfBirth: new Date(Date.now() + 86400000).toISOString(),
+    gender: 'Female',
+    address: 'Delhi',
+    status: 'active',
+  });
+
+  assert.equal(futureDob, 'dateOfBirth cannot be in the future');
+});
+
+test('validateCriminalStatus accepts active and inactive statuses', () => {
+  assert.equal(validateCriminalStatus('active'), true);
+  assert.equal(validateCriminalStatus('inactive'), true);
+  assert.equal(validateCriminalStatus('unknown'), false);
+});

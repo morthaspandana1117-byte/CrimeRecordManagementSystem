@@ -65,6 +65,11 @@ function Dashboard() {
           <div><p className="eyebrow mb-1">Officer account</p><h2 className="mb-1">Welcome, {user?.name || user?.username || 'Officer'}</h2><p className="mb-1 text-secondary">{user?.email || 'Email not available'}</p><p className="mb-0 text-secondary">Role: {formatRole(user?.role)}</p></div>
           {typeof user?.isActive === 'boolean' && <div className="account-badge"><span>Account status</span><strong>{user.isActive ? 'Active' : 'Inactive'}</strong></div>}
         </section>
+        <div className="d-flex flex-wrap gap-2 mb-4">
+          <button className="btn btn-primary" onClick={() => navigate('/criminals')} type="button">Manage criminals</button>
+          <button className="btn btn-outline-primary" onClick={() => navigate('/firs')} type="button">Manage FIRs</button>
+          <button className="btn btn-outline-primary" onClick={() => navigate('/cases')} type="button">Manage Cases</button>
+        </div>
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div><p className="eyebrow mb-1">Operational overview</p><h2 className="section-title mb-0">Record statistics</h2></div>
           <button className="btn btn-outline-primary" disabled={loading} onClick={loadStats} type="button">Refresh</button>

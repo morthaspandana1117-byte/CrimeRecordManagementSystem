@@ -115,6 +115,7 @@ const buildCaseQueryFilters = ({ search, status, priority } = {}) => {
     const searchTerm = typeof search === "string" ? search.trim() : "";
     if (searchTerm) {
         filter.$or = [
+            { caseNo: { $regex: searchTerm, $options: "i" } },
             { title: { $regex: searchTerm, $options: "i" } },
             { description: { $regex: searchTerm, $options: "i" } },
         ];

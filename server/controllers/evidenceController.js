@@ -7,6 +7,7 @@ const {
     isValidDate,
     invalid,
     notFound,
+    conflict,
     validateReference,
     handleError,
 } = require("./controllerUtils");
@@ -42,6 +43,8 @@ const fields = [
     "fileUrl",
     "status",
 ];
+
+const updateFields = fields.filter((field) => field !== "evidenceId");
 
 const required = [
     "evidenceId",
@@ -107,7 +110,7 @@ const normalizeEvidenceType = (value) => {
 
 const validateEvidenceType = (value) => normalizeEvidenceType(value) !== null;
 
-const buildEvidenceQueryFilters = ({ search, status, type, caseId, collectedBy } = {}) => {
+const buildEvidenceQueryFilters = ({ search, status, type, caseId, collectedBy, collectionDateFrom, collectionDateTo } = {}) => {
     const filter = {};
 
     if (status !== undefined) {
@@ -138,6 +141,19 @@ const buildEvidenceQueryFilters = ({ search, status, type, caseId, collectedBy }
             return { valid: false, error: "INVALID_COLLECTED_BY" };
         }
         filter.collectedBy = collectedBy;
+    }
+
+    if (collectionDateFrom !== undefined || collectionDateTo !== undefined) {
+        const collectionDate = {};
+        if (collectionDateFrom !== undefined) {
+            if (!isValidDate(collectionDateFrom)) return { valid: false, error: "INVALID_COLLECTION_DATE_FROM" };
+            collectionDate.$gte = new Date(collectionDateFrom);
+        }
+        if (collectionDateTo !== undefined) {
+            if (!isValidDate(collectionDateTo)) return { valid: false, error: "INVALID_COLLECTION_DATE_TO" };
+            collectionDate.$lte = new Date(collectionDateTo);
+        }
+        filter.collectionDate = collectionDate;
     }
 
     const searchTerm = typeof search === "string" ? search.trim() : "";
@@ -288,6 +304,9 @@ const createEvidence = async (req, res) => {
             data: populatedRecord,
         });
     } catch (error) {
+        if (error.code === 11000 && error.keyPattern?.evidenceId) {
+            return conflict(res, "Evidence ID already exists", "EVIDENCE_ID_ALREADY_EXISTS");
+        }
         return handleError(res, error, "Create evidence error");
     }
 };
@@ -300,6 +319,8 @@ const getAllEvidence = async (req, res) => {
             type: req.query.type,
             caseId: req.query.caseId,
             collectedBy: req.query.collectedBy,
+            collectionDateFrom: req.query.collectionDateFrom,
+            collectionDateTo: req.query.collectionDateTo,
         });
 
         if (!query.valid) {
@@ -368,7 +389,7 @@ const updateEvidence = async (req, res) => {
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
 
         const updates = Object.fromEntries(
-            Object.entries(req.body).filter(([key]) => fields.includes(key)),
+            Object.entries(req.body).filter(([key]) => updateFields.includes(key)),
         );
 
         if (!Object.keys(updates).length) {

@@ -5,6 +5,7 @@ const {
     isValidDate,
     invalid,
     notFound,
+    conflict,
     handleError,
 } = require("./controllerUtils");
 
@@ -27,14 +28,19 @@ const required = [
 ];
 
 const allowedFields = [
+    "criminalId",
     "fullName",
     "dateOfBirth",
     "gender",
     "address",
     "phoneNumber",
     "identificationDetails",
+    "photographUrl",
     "photo",
+    "status",
 ];
+
+const toTrimmedString = (value) => (typeof value === "string" ? value.trim() : value);
 
 const normalizeCriminalStatus = (value) => {
     if (typeof value !== "string") return null;
@@ -70,6 +76,10 @@ const buildCriminalQueryFilters = ({ search, status } = {}) => {
 };
 
 const validateCriminal = (body, partial = false) => {
+    if (!body || typeof body !== "object") {
+        return "Criminal data must be provided";
+    }
+
     if (!partial) {
         const missing = required.find(
             (field) =>
@@ -82,8 +92,38 @@ const validateCriminal = (body, partial = false) => {
         }
     }
 
-    if (body.dateOfBirth !== undefined && !isValidDate(body.dateOfBirth)) {
-        return "dateOfBirth must be a valid date";
+    if (body.criminalId !== undefined) {
+        const criminalId = toTrimmedString(body.criminalId);
+        if (!isNonEmptyString(criminalId)) {
+            return "criminalId must not be empty";
+        }
+        body.criminalId = criminalId;
+    }
+
+    if (body.fullName !== undefined) {
+        const fullName = toTrimmedString(body.fullName);
+        if (!isNonEmptyString(fullName)) {
+            return "fullName must not be empty";
+        }
+        body.fullName = fullName;
+    }
+
+    if (body.address !== undefined) {
+        const address = toTrimmedString(body.address);
+        if (!isNonEmptyString(address)) {
+            return "address must not be empty";
+        }
+        body.address = address;
+    }
+
+    if (body.dateOfBirth !== undefined && body.dateOfBirth !== null) {
+        const date = new Date(body.dateOfBirth);
+        if (!isValidDate(body.dateOfBirth)) {
+            return "dateOfBirth must be a valid date";
+        }
+        if (date > new Date()) {
+            return "dateOfBirth cannot be in the future";
+        }
     }
 
     if (
@@ -103,17 +143,18 @@ const validateCriminal = (body, partial = false) => {
     if (
         body.phoneNumber !== undefined &&
         body.phoneNumber !== "" &&
-        !/^[0-9+\-\s()]{7,20}$/.test(body.phoneNumber.trim())
+        !/^[0-9+\-\s()]{7,20}$/.test(String(body.phoneNumber).trim())
     ) {
         return "phoneNumber must be a valid phone number";
     }
 
+    const photographValue = body.photographUrl ?? body.photo;
     if (
-        body.photo !== undefined &&
-        body.photo !== "" &&
-        !/^https?:\/\//i.test(body.photo.trim())
+        photographValue !== undefined &&
+        photographValue !== "" &&
+        !/^https?:\/\//i.test(String(photographValue).trim())
     ) {
-        return "photo must be a valid URL";
+        return "photographUrl must be a valid URL";
     }
 
     if (
@@ -141,12 +182,46 @@ const validateCriminal = (body, partial = false) => {
     return null;
 };
 
+const normalizePayload = (body = {}) => {
+    const normalized = { ...body };
+
+    if (normalized.photographUrl === undefined && normalized.photo !== undefined) {
+        normalized.photographUrl = normalized.photo;
+    }
+    if (normalized.photo === undefined && normalized.photographUrl !== undefined) {
+        normalized.photo = normalized.photographUrl;
+    }
+    if (normalized.status !== undefined) {
+        normalized.status = normalizeCriminalStatus(normalized.status) || normalized.status;
+    }
+    return normalized;
+};
+
+const ensureUniqueCriminalId = async (id, excludedId = null) => {
+    const existing = await Criminal.findOne({
+        criminalId: id,
+        ...(excludedId ? { _id: { $ne: excludedId } } : {}),
+    }).lean();
+
+    if (existing) {
+        return true;
+    }
+
+    return false;
+};
+
 const createCriminal = async (req, res) => {
     try {
-        const message = validateCriminal(req.body);
+        const payload = normalizePayload(req.body);
+        const message = validateCriminal(payload);
         if (message) return invalid(res, message);
 
-        const criminal = await Criminal.create(req.body);
+        const trimmedId = payload.criminalId.trim();
+        if (await ensureUniqueCriminalId(trimmedId)) {
+            return conflict(res, "Criminal ID already exists", "CRIMINAL_ID_ALREADY_EXISTS");
+        }
+
+        const criminal = await Criminal.create(payload);
         return res.status(201).json({
             success: true,
             message: "Criminal created successfully",
@@ -226,8 +301,9 @@ const updateCriminal = async (req, res) => {
         if (!isValidObjectId(req.params.id))
             return invalid(res, "Invalid criminal ID", "INVALID_CRIMINAL_ID");
 
+        const payload = normalizePayload(req.body);
         const updates = Object.fromEntries(
-            Object.entries(req.body).filter(([key]) =>
+            Object.entries(payload).filter(([key]) =>
                 allowedFields.includes(key),
             ),
         );
@@ -238,6 +314,15 @@ const updateCriminal = async (req, res) => {
 
         const message = validateCriminal(updates, true);
         if (message) return invalid(res, message);
+
+        if (updates.criminalId) {
+            const trimmedId = updates.criminalId.trim();
+            const duplicateExists = await ensureUniqueCriminalId(trimmedId, req.params.id);
+            if (duplicateExists) {
+                return conflict(res, "Criminal ID already exists", "CRIMINAL_ID_ALREADY_EXISTS");
+            }
+            updates.criminalId = trimmedId;
+        }
 
         const criminal = await Criminal.findByIdAndUpdate(
             req.params.id,

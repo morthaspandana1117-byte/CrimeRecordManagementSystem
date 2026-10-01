@@ -1,9 +1,10 @@
 const express = require("express");
-const { authMiddleware } = require("../middleware/authMiddleware");
+const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware");
 const controller = require("../controllers/criminalController");
 const router = express.Router();
 
 router.use(authMiddleware);
+router.use(authorizeRoles("admin", "officer"));
 
 router.route("/").post(controller.createCriminal).get(controller.getAllCriminals);
 router.patch("/:id/status", controller.updateCriminalStatus);

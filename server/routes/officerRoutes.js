@@ -15,8 +15,9 @@ const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware
 
 const router = express.Router();
 
-router.use(authMiddleware, authorizeRoles("admin"));
-router.get("/assignable", getAssignableOfficers);
+router.use(authMiddleware);
+router.get("/assignable", authorizeRoles("admin", "officer"), getAssignableOfficers);
+router.use(authorizeRoles("admin"));
 router.get("/", getAllOfficers);
 router.get("/:id", getOfficerById);
 router.put("/:id", updateOfficer);

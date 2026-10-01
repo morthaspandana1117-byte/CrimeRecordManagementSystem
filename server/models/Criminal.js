@@ -7,6 +7,7 @@ const criminalSchema = new mongoose.Schema(
             required: true,
             unique: true,
             trim: true,
+            index: true,
         },
 
         fullName: {
@@ -52,6 +53,11 @@ const criminalSchema = new mongoose.Schema(
                 type: String,
                 trim: true,
             },
+        },
+
+        photographUrl: {
+            type: String,
+            trim: true,
         },
 
         photo: {

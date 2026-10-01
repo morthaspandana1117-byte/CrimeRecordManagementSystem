@@ -50,6 +50,21 @@ test('buildEvidenceQueryFilters combines search and filters correctly', () => {
   assert.equal(query.filter.$or.length, 4);
 });
 
+test('buildEvidenceQueryFilters validates collection date ranges', () => {
+  const query = buildEvidenceQueryFilters({
+    collectionDateFrom: '2026-09-01',
+    collectionDateTo: '2026-09-30',
+  });
+
+  assert.equal(query.valid, true);
+  assert.equal(query.filter.collectionDate.$gte.toISOString(), '2026-09-01T00:00:00.000Z');
+  assert.equal(query.filter.collectionDate.$lte.toISOString(), '2026-09-30T00:00:00.000Z');
+  assert.deepEqual(buildEvidenceQueryFilters({ collectionDateFrom: 'not-a-date' }), {
+    valid: false,
+    error: 'INVALID_COLLECTION_DATE_FROM',
+  });
+});
+
 test('validateEvidence rejects missing required values and invalid status', async () => {
   const valid = await validateEvidence(
     { status: 500 },
