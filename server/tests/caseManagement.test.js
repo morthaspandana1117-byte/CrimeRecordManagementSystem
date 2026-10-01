@@ -15,6 +15,7 @@ test('normalizeCaseStatus accepts supported case states', () => {
   assert.equal(normalizeCaseStatus('open'), 'Open');
   assert.equal(normalizeCaseStatus('Under Investigation'), 'Under Investigation');
   assert.equal(normalizeCaseStatus('closed'), 'Closed');
+  assert.equal(normalizeCaseStatus('reopened'), 'Reopened');
   assert.equal(normalizeCaseStatus('Pending Review'), null);
 });
 
@@ -86,5 +87,5 @@ test('validateCase rejects missing required values and invalid status', async ()
     false,
   );
 
-  assert.equal(invalidStatus, 'status must be one of: Open, Under Investigation, Court Proceedings, Closed');
+  assert.equal(invalidStatus, 'status must be one of: Open, Under Investigation, Court Proceedings, Closed, Reopened');
 });

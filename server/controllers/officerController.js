@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const { normalizeOfficerRank, OFFICER_RANKS } = require("../middleware/authority");
 
 const {
     isValidObjectId,
@@ -193,6 +194,14 @@ const registerOfficer = async (req, res) => {
             );
         }
 
+        if (!OFFICER_RANKS.includes(normalizeOfficerRank(rank)) || rank !== normalizeOfficerRank(rank)) {
+            return invalid(
+                res,
+                "rank must be one of: investigating_officer, inspector, dsp, sp",
+                "INVALID_OFFICER_RANK",
+            );
+        }
+
         const existingUser = await User.findOne({
             $or: [
                 { username: username.trim() },
@@ -243,7 +252,7 @@ const registerOfficer = async (req, res) => {
             officerId: officerId.trim(),
             badgeNumber: batchNumber,
             name: name.trim(),
-            rank,
+            rank: normalizeOfficerRank(rank),
             department,
             station: station.trim(),
             phoneNumber: phoneNumber.trim(),
@@ -408,6 +417,18 @@ const updateOfficer = async (req, res) => {
                 "joiningDate must be a valid date",
                 "INVALID_DATE"
             );
+        }
+
+        if (officerUpdates.rank !== undefined) {
+            const normalizedRank = normalizeOfficerRank(officerUpdates.rank);
+            if (!normalizedRank) {
+                return invalid(
+                    res,
+                    "rank must be one of: investigating_officer, inspector, dsp, sp",
+                    "INVALID_OFFICER_RANK",
+                );
+            }
+            officerUpdates.rank = normalizedRank;
         }
 
         const stringFields = [

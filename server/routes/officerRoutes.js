@@ -11,13 +11,20 @@ const {
     updateOfficerAccountStatus,
 } = require("../controllers/officerController");
 
-const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware");
+const { authMiddleware } = require("../middleware/authMiddleware");
+const {
+    OFFICER_RANKS,
+    SENIOR_OFFICER_RANKS,
+    resolveAuthority,
+    requireAuthority,
+} = require("../middleware/authority");
 
 const router = express.Router();
 
 router.use(authMiddleware);
-router.get("/assignable", authorizeRoles("admin", "officer"), getAssignableOfficers);
-router.use(authorizeRoles("admin"));
+router.use(resolveAuthority);
+router.get("/assignable", requireAuthority({ ranks: OFFICER_RANKS, systemRoles: ["system_admin"] }), getAssignableOfficers);
+router.use(requireAuthority({ ranks: SENIOR_OFFICER_RANKS, systemRoles: ["system_admin"] }));
 router.get("/", getAllOfficers);
 router.get("/:id", getOfficerById);
 router.put("/:id", updateOfficer);

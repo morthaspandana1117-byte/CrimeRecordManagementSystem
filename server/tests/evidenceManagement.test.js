@@ -65,6 +65,17 @@ test('buildEvidenceQueryFilters validates collection date ranges', () => {
   });
 });
 
+test('buildEvidenceQueryFilters supports investigation round filtering', () => {
+  const query = buildEvidenceQueryFilters({ investigationRound: '2' });
+
+  assert.equal(query.valid, true);
+  assert.equal(query.filter.investigationRound, 2);
+  assert.deepEqual(buildEvidenceQueryFilters({ investigationRound: '0' }), {
+    valid: false,
+    error: 'INVALID_INVESTIGATION_ROUND',
+  });
+});
+
 test('validateEvidence rejects missing required values and invalid status', async () => {
   const valid = await validateEvidence(
     { status: 500 },

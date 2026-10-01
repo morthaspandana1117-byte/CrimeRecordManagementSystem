@@ -15,6 +15,12 @@ const evidenceSchema = new mongoose.Schema(
             required: true,
         },
 
+        investigationRound: {
+            type: Number,
+            required: true,
+            min: 1,
+        },
+
         type: {
             type: String,
             required: true,
@@ -71,10 +77,22 @@ const evidenceSchema = new mongoose.Schema(
             ],
             default: "Collected",
         },
+
+        createdBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+        },
+
+        updatedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+        },
     },
     {
         timestamps: true,
     },
 );
+
+evidenceSchema.index({ caseId: 1, investigationRound: 1, collectionDate: -1 });
 
 module.exports = mongoose.model("Evidence", evidenceSchema);

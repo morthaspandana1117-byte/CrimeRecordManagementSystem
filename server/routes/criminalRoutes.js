@@ -1,10 +1,12 @@
 const express = require("express");
-const { authMiddleware, authorizeRoles } = require("../middleware/authMiddleware");
+const { authMiddleware } = require("../middleware/authMiddleware");
+const { OFFICER_RANKS, resolveAuthority, requireAuthority } = require("../middleware/authority");
 const controller = require("../controllers/criminalController");
 const router = express.Router();
 
 router.use(authMiddleware);
-router.use(authorizeRoles("admin", "officer"));
+router.use(resolveAuthority);
+router.use(requireAuthority({ ranks: OFFICER_RANKS }));
 
 router.route("/").post(controller.createCriminal).get(controller.getAllCriminals);
 router.patch("/:id/status", controller.updateCriminalStatus);

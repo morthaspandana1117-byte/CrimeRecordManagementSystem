@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getCaseById, getEvidence } from '../services/api'
+import { useAuth } from '../context/useAuth'
+import { isSeniorOfficer } from '../authority'
+import { getCaseById, getEvidence, reopenCase } from '../services/api'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -9,11 +11,13 @@ const displayValue = (item) => item || 'Not available'
 function CaseDetails() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [record, setRecord] = useState(null)
   const [evidence, setEvidence] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
+  const [reopening, setReopening] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -35,6 +39,20 @@ function CaseDetails() {
       setLoading(false)
     }
   }, [id])
+
+  const handleReopen = async () => {
+    const reopenReason = window.prompt('Reason for reopening this Case:')?.trim()
+    if (!reopenReason) return
+    try {
+      setReopening(true)
+      await reopenCase(id, reopenReason)
+      await load()
+    } catch (requestError) {
+      setError(message(requestError, 'Could not reopen this Case.'))
+    } finally {
+      setReopening(false)
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(load, 0)
@@ -60,7 +78,7 @@ function CaseDetails() {
           <>
             <section className="welcome-card mb-4">
               <div><p className="eyebrow mb-1">Case record</p><h2 className="mb-1">{record.caseNo}</h2><p className="mb-0 text-secondary">{record.title}</p></div>
-              <button className="btn btn-primary" onClick={() => navigate(`/cases/${id}/edit`)} type="button">Edit Case</button>
+              <div className="d-flex gap-2">{isSeniorOfficer(user) && <button className="btn btn-primary" onClick={() => navigate(`/cases/${id}/edit`)} type="button">Edit Case</button>}{record.status === 'Closed' && isSeniorOfficer(user) && <button className="btn btn-warning" disabled={reopening} onClick={handleReopen} type="button">{reopening ? 'Reopening...' : 'Reopen Case'}</button>}</div>
             </section>
             <div className="row g-4">
               <div className="col-12 col-lg-8">
@@ -77,10 +95,11 @@ function CaseDetails() {
               </div>
             </div>
             <div className="fir-detail-card mt-4">
-              <div className="detail-section-header d-flex align-items-center justify-content-between gap-3"><h3>Related Evidence</h3><button className="btn btn-sm btn-primary" onClick={() => navigate(`/evidence/create?caseId=${id}`)} type="button">+ Add Evidence</button></div>
+              <div className="detail-section-header d-flex align-items-center justify-content-between gap-3"><h3>Related Evidence</h3>{record.status !== 'Closed' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/evidence/create?caseId=${id}`)} type="button">+ Add Evidence</button>}</div>
               {evidenceError && <div className="alert alert-warning" role="alert">{evidenceError}</div>}
               {evidence.length ? evidence.map((item) => <div className="border rounded p-3 mb-2" key={item._id}><strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong><div>{displayValue(item.description)}</div><div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)}</div></div>) : <p className="mb-0">No evidence linked to this case.</p>}
             </div>
+            {record.investigationHistory?.length > 0 && <div className="fir-detail-card mt-4"><div className="detail-section-header"><h3>Investigation History</h3></div>{record.investigationHistory.map((round) => { const roundEvidence = evidence.filter((item) => item.investigationRound === round.round); return <div className="border rounded p-3 mb-3" key={round.round}><strong>Investigation Round {round.round}</strong><div className="small text-secondary">Started: {date(round.startedAt)} · Closed: {date(round.closedAt)} · {displayValue(round.status)}</div>{round.reopenReason && <div>Reason: {round.reopenReason}</div>}<div className="mt-2">{roundEvidence.length ? roundEvidence.map((item) => <div key={item._id}>{item.evidenceId} · {item.type}</div>) : 'No evidence recorded in this round.'}</div></div> })}</div>}
           </>
         )}
       </main>

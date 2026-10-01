@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const { normalizeOfficerRank, normalizeSystemRole } = require("../middleware/authority");
 const { sendPasswordResetEmail } = require("../services/emailService");
 
 const RESET_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
@@ -154,11 +155,20 @@ const login = async (req, res) => {
             });
         }
 
+        const systemRole = normalizeSystemRole(user.role);
+        const officer = systemRole === "officer"
+            ? await Officer.findOne({ userId: user._id }).select("rank")
+            : null;
+        const rank = officer ? normalizeOfficerRank(officer.rank) : null;
+        const legacyRole = systemRole === "system_admin" ? "admin" : "officer";
+
         const token = jwt.sign(
             {
                 userId: user._id,
                 username: user.username,
-                role: user.role,
+                role: legacyRole,
+                systemRole,
+                rank,
                 status: accountStatus,
             },
             process.env.JWT_SECRET,
@@ -175,7 +185,9 @@ const login = async (req, res) => {
                 id: user._id,
                 username: user.username,
                 email: user.email,
-                role: user.role,
+                role: legacyRole,
+                systemRole,
+                rank,
                 status: accountStatus,
             },
         });
@@ -204,13 +216,20 @@ const getMe = async (req, res) => {
             });
         }
 
+        const systemRole = normalizeSystemRole(user.role);
+        const officer = systemRole === "officer"
+            ? await Officer.findOne({ userId: user._id }).select("rank")
+            : null;
+
         res.status(200).json({
             success: true,
             data: {
                 id: user._id,
                 username: user.username,
                 email: user.email,
-                role: user.role,
+                role: systemRole === "system_admin" ? "admin" : "officer",
+                systemRole,
+                rank: officer ? normalizeOfficerRank(officer.rank) : null,
                 status: user.status || "approved",
                 isActive: user.isActive,
             },

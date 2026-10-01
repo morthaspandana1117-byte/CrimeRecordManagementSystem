@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getDashboardStats } from '../services/api'
+import { isSeniorOfficer } from '../authority'
 
 const statCards = [
   { key: 'totalFIRs', label: 'FIRs', icon: 'FI' },
@@ -62,13 +63,13 @@ function Dashboard() {
       </header>
       <main className="container py-4 py-md-5">
         <section className="welcome-card mb-4">
-          <div><p className="eyebrow mb-1">Officer account</p><h2 className="mb-1">Welcome, {user?.name || user?.username || 'Officer'}</h2><p className="mb-1 text-secondary">{user?.email || 'Email not available'}</p><p className="mb-0 text-secondary">Role: {formatRole(user?.role)}</p></div>
+          <div><p className="eyebrow mb-1">Officer account</p><h2 className="mb-1">Welcome, {user?.name || user?.username || 'Officer'}</h2><p className="mb-1 text-secondary">{user?.email || 'Email not available'}</p><p className="mb-0 text-secondary">System role: {formatRole(user?.systemRole || user?.role)} · Rank: {user?.rank || 'Not configured'}</p></div>
           {typeof user?.isActive === 'boolean' && <div className="account-badge"><span>Account status</span><strong>{user.isActive ? 'Active' : 'Inactive'}</strong></div>}
         </section>
         <div className="d-flex flex-wrap gap-2 mb-4">
-          <button className="btn btn-primary" onClick={() => navigate('/criminals')} type="button">Manage criminals</button>
-          <button className="btn btn-outline-primary" onClick={() => navigate('/firs')} type="button">Manage FIRs</button>
-          <button className="btn btn-outline-primary" onClick={() => navigate('/cases')} type="button">Manage Cases</button>
+          <button className="btn btn-primary" onClick={() => navigate('/criminals')} type="button">Criminals</button>
+          <button className="btn btn-outline-primary" onClick={() => navigate('/firs')} type="button">FIRs</button>
+          <button className="btn btn-outline-primary" onClick={() => navigate('/cases')} type="button">{isSeniorOfficer(user) ? 'Manage Cases' : 'My Cases'}</button>
         </div>
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div><p className="eyebrow mb-1">Operational overview</p><h2 className="section-title mb-0">Record statistics</h2></div>

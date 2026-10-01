@@ -34,6 +34,11 @@ const officerSchema = new mongoose.Schema(
             type: String,
             required: true,
             enum: [
+                "investigating_officer",
+                "inspector",
+                "dsp",
+                "sp",
+                // Legacy values remain valid until the rank migration runs.
                 "Constable",
                 "Head Constable",
                 "ASI",

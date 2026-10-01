@@ -19,9 +19,11 @@ const validCaseStatuses = [
     "Under Investigation",
     "Court Proceedings",
     "Closed",
+    "Reopened",
 ];
 
 const validCasePriorities = ["Low", "Medium", "High", "Critical"];
+const seniorOfficerRanks = new Set(["inspector", "dsp", "sp"]);
 
 const fields = [
     "caseNo",
@@ -53,7 +55,10 @@ const populate = (query) =>
             "assignedOfficerIds",
             "officerId name rank department station status",
         )
-        .populate("criminalIds", "criminalId fullName status");
+        .populate("criminalIds", "criminalId fullName status")
+        .populate("investigationHistory.startedBy", "username role")
+        .populate("investigationHistory.closedBy", "username role")
+        .populate("investigationHistory.reopenedBy", "username role");
 
 const normalizeCaseStatus = (value) => {
     if (typeof value !== "string") return null;
@@ -66,6 +71,7 @@ const normalizeCaseStatus = (value) => {
         "under investigation": "Under Investigation",
         "court proceedings": "Court Proceedings",
         closed: "Closed",
+        reopened: "Reopened",
     };
 
     if (aliases[normalized]) return aliases[normalized];
@@ -73,6 +79,15 @@ const normalizeCaseStatus = (value) => {
 };
 
 const validateCaseStatus = (value) => normalizeCaseStatus(value) !== null;
+
+const isSeniorAuthority = (req) => seniorOfficerRanks.has(req.authority?.rank);
+
+const canAccessCase = (req, record) =>
+    isSeniorAuthority(req) ||
+    req.authority?.systemRole === "system_admin" ||
+    record.assignedOfficerIds?.some((officerId) =>
+        String(officerId?._id || officerId) === String(req.authority?.officer?._id),
+    );
 
 const normalizeCasePriority = (value) => {
     if (typeof value !== "string") return null;
@@ -207,7 +222,7 @@ const validateCase = async (res, body, partial = false) => {
     if (body.status !== undefined) {
         const normalizedStatus = normalizeCaseStatus(body.status);
         if (normalizedStatus === null) {
-            return "status must be one of: Open, Under Investigation, Court Proceedings, Closed";
+            return "status must be one of: Open, Under Investigation, Court Proceedings, Closed, Reopened";
         }
         body.status = normalizedStatus;
     }
@@ -293,6 +308,17 @@ const createCase = async (req, res) => {
             );
         }
 
+        const startedAt = new Date();
+        payload.currentInvestigationRound = 1;
+        payload.investigationHistory = [{
+            round: 1,
+            startedAt,
+            startedBy: req.user?.userId,
+            status: payload.status === "Closed" ? "Closed" : "Open",
+            ...(payload.status === "Closed"
+                ? { closedAt: startedAt, closedBy: req.user?.userId }
+                : {}),
+        }];
         const record = await Case.create(payload);
         const populatedRecord = await populate(Case.findById(record._id).select("-__v"));
 
@@ -319,6 +345,9 @@ const getAllCases = async (req, res) => {
         }
 
         const filter = query.filter;
+        if (req.authority?.rank === "investigating_officer") {
+            filter.assignedOfficerIds = req.authority.officer._id;
+        }
         const page = Number.parseInt(req.query.page ?? "1", 10);
         const limit = Number.parseInt(req.query.limit ?? "10", 10);
 
@@ -366,6 +395,13 @@ const getCaseById = async (req, res) => {
             return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
 
         const record = await populate(Case.findById(req.params.id).select("-__v"));
+        if (record && !canAccessCase(req, record)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only access cases assigned to you",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
         return record
             ? res.status(200).json({ success: true, data: record })
             : notFound(res, "Case");
@@ -383,8 +419,26 @@ const updateCase = async (req, res) => {
             Object.entries(req.body).filter(([key]) => fields.includes(key)),
         );
 
+        const existingRecord = await Case.findById(req.params.id).select("assignedOfficerIds status");
+        if (!existingRecord) return notFound(res, "Case");
+        if (!canAccessCase(req, existingRecord)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only update cases assigned to you",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
         if (!Object.keys(updates).length) {
             return invalid(res, "No valid case fields were provided");
+        }
+
+        if (updates.status === "Reopened") {
+            return invalid(res, "Use the reopen endpoint to reopen a closed Case", "USE_REOPEN_ENDPOINT");
+        }
+
+        if (updates.status && updates.status !== "Closed" && await Case.exists({ _id: req.params.id, status: "Closed" })) {
+            return conflict(res, "Use the reopen endpoint before changing a closed Case", "CASE_REOPEN_REQUIRED");
         }
 
         const result = await validateCase(res, updates, true);
@@ -447,6 +501,9 @@ const assignCaseOfficers = async (req, res) => {
         if (!record) {
             return notFound(res, "Case");
         }
+        if (!canAccessCase(req, record)) {
+            return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
 
         const assignedOfficerIds = Array.isArray(req.body.assignedOfficerIds)
             ? req.body.assignedOfficerIds
@@ -491,28 +548,128 @@ const updateCaseStatus = async (req, res) => {
         if (normalizedStatus === null) {
             return invalid(
                 res,
-                "status must be one of: Open, Under Investigation, Court Proceedings, Closed",
+                "status must be one of: Open, Under Investigation, Court Proceedings, Closed, Reopened",
                 "INVALID_CASE_STATUS",
             );
         }
 
-        const record = await populate(
-            Case.findByIdAndUpdate(
-                req.params.id,
-                { status: normalizedStatus },
-                { new: true, runValidators: true },
-            ).select("-__v"),
+        if (normalizedStatus === "Reopened") {
+            return invalid(res, "Use the reopen endpoint to reopen a closed Case", "USE_REOPEN_ENDPOINT");
+        }
+
+        const record = await Case.findById(req.params.id);
+        if (!record) return notFound(res, "Case");
+        if (!canAccessCase(req, record)) {
+            return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+
+        if (record.status === "Closed" && normalizedStatus !== "Closed") {
+            return conflict(res, "Use the reopen endpoint before changing a closed Case", "CASE_REOPEN_REQUIRED");
+        }
+
+        if (!record.currentInvestigationRound) {
+            record.currentInvestigationRound = 1;
+            record.investigationHistory.push({
+                round: 1,
+                startedAt: record.startDate || new Date(),
+                startedBy: req.user?.userId,
+                status: normalizedStatus === "Closed" ? "Closed" : normalizedStatus,
+            });
+        }
+
+        const currentRound = record.investigationHistory.find(
+            (round) => round.round === record.currentInvestigationRound,
+        );
+        if (currentRound) {
+            currentRound.status = normalizedStatus;
+            if (normalizedStatus === "Closed") {
+                currentRound.closedAt = new Date();
+                currentRound.closedBy = req.user?.userId;
+                currentRound.closureReason = typeof req.body.closureReason === "string"
+                    ? req.body.closureReason.trim()
+                    : undefined;
+            }
+        }
+        record.status = normalizedStatus;
+        await record.save();
+
+        const populatedRecord = await populate(
+            Case.findById(record._id).select("-__v"),
         );
 
-        return record
+        return populatedRecord
             ? res.status(200).json({
                   success: true,
                   message: "Case status updated successfully",
-                  data: record,
+                  data: populatedRecord,
               })
             : notFound(res, "Case");
     } catch (error) {
         return handleError(res, error, "Update case status error");
+    }
+};
+
+const reopenCase = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
+        }
+
+        if (!isSeniorAuthority(req)) {
+            return res.status(403).json({
+                success: false,
+                message: "Only Inspector, DSP, or SP officers can reopen a Case",
+                error: "INSUFFICIENT_PERMISSIONS",
+            });
+        }
+
+        const reopenReason = typeof req.body.reopenReason === "string"
+            ? req.body.reopenReason.trim()
+            : "";
+        if (!reopenReason) {
+            return invalid(res, "reopenReason is required", "REOPEN_REASON_REQUIRED");
+        }
+
+        const record = await Case.findById(req.params.id);
+        if (!record) return notFound(res, "Case");
+        if (record.status !== "Closed") {
+            return conflict(res, "Only a closed Case can be reopened", "CASE_NOT_CLOSED");
+        }
+
+        const previousRound = record.investigationHistory.find(
+            (round) => round.round === record.currentInvestigationRound,
+        );
+        if (previousRound) {
+            previousRound.status = "Closed";
+            previousRound.closedAt ||= new Date();
+            previousRound.closedBy ||= req.user.userId;
+            previousRound.reopenReason = reopenReason;
+            previousRound.reopenedAt = new Date();
+            previousRound.reopenedBy = req.user.userId;
+        }
+
+        const nextRound = (record.currentInvestigationRound || record.investigationHistory.length || 0) + 1;
+        record.currentInvestigationRound = nextRound;
+        record.investigationHistory.push({
+            round: nextRound,
+            startedAt: new Date(),
+            startedBy: req.user.userId,
+            reopenReason,
+            reopenedAt: new Date(),
+            reopenedBy: req.user.userId,
+            status: "Reopened",
+        });
+        record.status = "Reopened";
+        await record.save();
+
+        const populatedRecord = await populate(Case.findById(record._id).select("-__v"));
+        return res.status(200).json({
+            success: true,
+            message: "Case reopened successfully",
+            data: populatedRecord,
+        });
+    } catch (error) {
+        return handleError(res, error, "Reopen case error");
     }
 };
 
@@ -542,6 +699,7 @@ module.exports = {
     updateCase,
     assignCaseOfficers,
     updateCaseStatus,
+    reopenCase,
     deleteCase,
     normalizeCaseStatus,
     validateCaseStatus,

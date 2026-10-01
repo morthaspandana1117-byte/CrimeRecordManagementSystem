@@ -28,7 +28,7 @@ const seedAdmin = async () => {
     const existingUser = await User.findOne({ $or: [{ username }, { email }] });
 
     if (existingUser) {
-        if (existingUser.role !== "admin") {
+        if (!["admin", "system_admin"].includes(existingUser.role)) {
             throw new Error("A non-admin user already uses this username or email");
         }
         console.log("Admin account already exists; no changes were made.");
@@ -39,7 +39,7 @@ const seedAdmin = async () => {
         username,
         email,
         passwordHash: await bcrypt.hash(password, 10),
-        role: "admin",
+            role: "system_admin",
         status: "approved",
         isActive: true,
     });

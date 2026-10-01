@@ -73,6 +73,10 @@ const normalizeFIRStatus = (value) => {
 
 const validateFIRStatus = (value) => normalizeFIRStatus(value) !== null;
 
+const canAccessFIR = (req, fir) =>
+    req.authority?.rank !== "investigating_officer" ||
+    String(fir?.registeredBy?._id || fir?.registeredBy) === String(req.authority?.officer?._id);
+
 const buildFIRQueryFilters = ({ search, status, crimeType } = {}) => {
     const filter = {};
 
@@ -342,6 +346,9 @@ const getAllFIRs = async (req, res) => {
         }
 
         const filter = query.filter;
+        if (req.authority?.rank === "investigating_officer") {
+            filter.registeredBy = req.authority.officer._id;
+        }
         const page = Number.parseInt(req.query.page ?? "1", 10);
         const limit = Number.parseInt(req.query.limit ?? "10", 10);
 
@@ -389,7 +396,11 @@ const getFIRById = async (req, res) => {
             return invalid(res, "Invalid FIR ID", "INVALID_FIR_ID");
         }
 
-        const fir = await populate(FIR.findById(req.params.id).select("-__v"));
+        const rawFIR = await FIR.findById(req.params.id).select("-__v");
+        if (rawFIR && !canAccessFIR(req, rawFIR)) {
+            return res.status(403).json({ success: false, message: "You may only access relevant FIRs", error: "FIR_ACCESS_DENIED" });
+        }
+        const fir = await populate(rawFIR ? FIR.findById(req.params.id).select("-__v") : FIR.findById(req.params.id));
         return fir
             ? res.status(200).json({ success: true, data: fir })
             : notFound(res, "FIR");
@@ -407,6 +418,12 @@ const updateFIR = async (req, res) => {
         const updates = strikeAllowedFields(req.body);
         if (!Object.keys(updates).length) {
             return invalid(res, "No valid FIR fields were provided");
+        }
+
+        const existingFIR = await FIR.findById(req.params.id).select("registeredBy");
+        if (!existingFIR) return notFound(res, "FIR");
+        if (!canAccessFIR(req, existingFIR)) {
+            return res.status(403).json({ success: false, message: "You may only update relevant FIRs", error: "FIR_ACCESS_DENIED" });
         }
 
         if (req.user.role === "officer") {
@@ -463,6 +480,12 @@ const updateFIRStatus = async (req, res) => {
                 "status must be one of: Open, Under Investigation, Closed",
                 "INVALID_FIR_STATUS",
             );
+        }
+
+        const existingFIR = await FIR.findById(req.params.id).select("registeredBy");
+        if (!existingFIR) return notFound(res, "FIR");
+        if (!canAccessFIR(req, existingFIR)) {
+            return res.status(403).json({ success: false, message: "You may only update relevant FIRs", error: "FIR_ACCESS_DENIED" });
         }
 
         const fir = await populate(

@@ -44,7 +44,7 @@ const fields = [
     "status",
 ];
 
-const updateFields = fields.filter((field) => field !== "evidenceId");
+const updateFields = ["description", "location", "fileUrl"];
 
 const required = [
     "evidenceId",
@@ -63,7 +63,9 @@ const populate = (query) =>
         .populate(
             "collectedBy",
             "officerId name rank department station status userId",
-        );
+        )
+        .populate("createdBy", "username role")
+        .populate("updatedBy", "username role");
 
 const normalizeEvidenceStatus = (value) => {
     if (typeof value !== "string") return null;
@@ -110,7 +112,13 @@ const normalizeEvidenceType = (value) => {
 
 const validateEvidenceType = (value) => normalizeEvidenceType(value) !== null;
 
-const buildEvidenceQueryFilters = ({ search, status, type, caseId, collectedBy, collectionDateFrom, collectionDateTo } = {}) => {
+const canAccessCase = (req, caseRecord) =>
+    req.authority?.rank !== "investigating_officer" ||
+    caseRecord?.assignedOfficerIds?.some((officerId) =>
+        String(officerId) === String(req.authority?.officer?._id),
+    );
+
+const buildEvidenceQueryFilters = ({ search, status, type, caseId, investigationRound, collectedBy, collectionDateFrom, collectionDateTo } = {}) => {
     const filter = {};
 
     if (status !== undefined) {
@@ -134,6 +142,14 @@ const buildEvidenceQueryFilters = ({ search, status, type, caseId, collectedBy, 
             return { valid: false, error: "INVALID_CASE_ID" };
         }
         filter.caseId = caseId;
+    }
+
+    if (investigationRound !== undefined) {
+        const round = Number(investigationRound);
+        if (!Number.isInteger(round) || round < 1) {
+            return { valid: false, error: "INVALID_INVESTIGATION_ROUND" };
+        }
+        filter.investigationRound = round;
     }
 
     if (collectedBy !== undefined) {
@@ -295,6 +311,33 @@ const createEvidence = async (req, res) => {
         const result = await validateEvidence(res, payload);
         if (result !== "OK") return result ? invalid(res, result) : undefined;
 
+        const caseRecord = await Case.findById(payload.caseId);
+        if (!caseRecord) return notFound(res, "Case");
+        if (!canAccessCase(req, caseRecord)) {
+            return res.status(403).json({ success: false, message: "You may only add evidence to assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+        if (caseRecord.status === "Closed") {
+            return res.status(409).json({
+                success: false,
+                message: "Reopen the Case before adding new Evidence",
+                error: "CASE_CLOSED",
+            });
+        }
+
+        if (!caseRecord.currentInvestigationRound) {
+            caseRecord.currentInvestigationRound = 1;
+            caseRecord.investigationHistory.push({
+                round: 1,
+                startedAt: caseRecord.startDate || new Date(),
+                startedBy: req.user?.userId,
+                status: caseRecord.status === "Reopened" ? "Reopened" : caseRecord.status,
+            });
+            await caseRecord.save();
+        }
+
+        payload.investigationRound = caseRecord.currentInvestigationRound;
+        payload.createdBy = req.user?.userId;
+
         const record = await Evidence.create(payload);
         const populatedRecord = await populate(Evidence.findById(record._id).select("-__v"));
 
@@ -318,6 +361,7 @@ const getAllEvidence = async (req, res) => {
             status: req.query.status,
             type: req.query.type,
             caseId: req.query.caseId,
+            investigationRound: req.query.investigationRound,
             collectedBy: req.query.collectedBy,
             collectionDateFrom: req.query.collectionDateFrom,
             collectionDateTo: req.query.collectionDateTo,
@@ -328,6 +372,10 @@ const getAllEvidence = async (req, res) => {
         }
 
         const filter = query.filter;
+        if (req.authority?.rank === "investigating_officer") {
+            const assignedCases = await Case.find({ assignedOfficerIds: req.authority.officer._id }).select("_id");
+            filter.caseId = { $in: assignedCases.map((record) => record._id) };
+        }
         const page = Number.parseInt(req.query.page ?? "1", 10);
         const limit = Number.parseInt(req.query.limit ?? "10", 10);
 
@@ -374,7 +422,14 @@ const getEvidenceById = async (req, res) => {
         if (!isValidObjectId(req.params.id))
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
 
-        const record = await populate(Evidence.findById(req.params.id).select("-__v"));
+        const rawRecord = await Evidence.findById(req.params.id).select("-__v");
+        if (rawRecord) {
+            const caseRecord = await Case.findById(rawRecord.caseId).select("assignedOfficerIds");
+            if (!canAccessCase(req, caseRecord)) {
+                return res.status(403).json({ success: false, message: "You may only access evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
+            }
+        }
+        const record = await populate(rawRecord ? Evidence.findById(req.params.id).select("-__v") : Evidence.findById(req.params.id));
         return record
             ? res.status(200).json({ success: true, data: record })
             : notFound(res, "Evidence");
@@ -388,6 +443,13 @@ const updateEvidence = async (req, res) => {
         if (!isValidObjectId(req.params.id))
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
 
+        const existingRecord = await Evidence.findById(req.params.id).select("caseId");
+        if (!existingRecord) return notFound(res, "Evidence");
+        const existingCase = await Case.findById(existingRecord.caseId).select("assignedOfficerIds");
+        if (!canAccessCase(req, existingCase)) {
+            return res.status(403).json({ success: false, message: "You may only update evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+
         const updates = Object.fromEntries(
             Object.entries(req.body).filter(([key]) => updateFields.includes(key)),
         );
@@ -399,6 +461,7 @@ const updateEvidence = async (req, res) => {
         const result = await validateEvidence(res, updates, true);
         if (result !== "OK") return result ? invalid(res, result) : undefined;
 
+        updates.updatedBy = req.user?.userId;
         const record = await populate(
             Evidence.findByIdAndUpdate(req.params.id, updates, {
                 new: true,
@@ -424,6 +487,13 @@ const updateEvidenceStatus = async (req, res) => {
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
         }
 
+        const existingRecord = await Evidence.findById(req.params.id).select("caseId");
+        if (!existingRecord) return notFound(res, "Evidence");
+        const existingCase = await Case.findById(existingRecord.caseId).select("assignedOfficerIds");
+        if (!canAccessCase(req, existingCase)) {
+            return res.status(403).json({ success: false, message: "You may only update evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+
         const normalizedStatus = normalizeEvidenceStatus(req.body.status);
         if (normalizedStatus === null) {
             return invalid(
@@ -436,7 +506,7 @@ const updateEvidenceStatus = async (req, res) => {
         const record = await populate(
             Evidence.findByIdAndUpdate(
                 req.params.id,
-                { status: normalizedStatus },
+                { status: normalizedStatus, updatedBy: req.user?.userId },
                 { new: true, runValidators: true },
             ).select("-__v"),
         );
@@ -453,33 +523,12 @@ const updateEvidenceStatus = async (req, res) => {
     }
 };
 
-const deleteEvidence = async (req, res) => {
-    try {
-        if (!isValidObjectId(req.params.id))
-            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
-
-        const record = await Evidence.findByIdAndDelete(req.params.id);
-        return record
-            ? res
-                  .status(200)
-                  .json({
-                      success: true,
-                      message: "Evidence deleted successfully",
-                      data: { id: record._id },
-                  })
-            : notFound(res, "Evidence");
-    } catch (error) {
-        return handleError(res, error, "Delete evidence error");
-    }
-};
-
 module.exports = {
     createEvidence,
     getAllEvidence,
     getEvidenceById,
     updateEvidence,
     updateEvidenceStatus,
-    deleteEvidence,
     normalizeEvidenceStatus,
     validateEvidenceStatus,
     normalizeEvidenceType,

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getOfficerById, updateOfficer } from '../services/api'
+import { officerRankOptions, officerRanks } from '../authority'
 
-const ranks = ['Constable', 'Head Constable', 'ASI', 'SI', 'Inspector', 'DSP']
+const ranks = officerRanks
 const departments = ['Cyber Crime', 'Criminal Investigation', 'Traffic', 'Law and Order']
 
 const dateInputValue = (value) => {
@@ -191,7 +192,7 @@ function OfficerEdit() {
                 <div className="col-12 col-md-6">
                   <label className="form-label" htmlFor="rank">Rank</label>
                   <select className="form-select" id="rank" name="rank" onChange={updateField} value={form.rank}>
-                    {ranks.map((option) => <option key={option} value={option}>{option}</option>)}
+                    {officerRankOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </select>
                 </div>
 
