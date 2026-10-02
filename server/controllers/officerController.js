@@ -304,6 +304,36 @@ const getAllOfficers = async (req, res) => {
 
         const { search, approvalStatus, accountStatus, searchRegex } = queryValidation.filters;
 
+        if (req.authority?.systemRole === "system_admin") {
+            const accounts = await Officer.find()
+                .select("userId status")
+                .populate("userId", "username email isActive status");
+
+            const filteredAccounts = accounts.filter((officer) => {
+                const user = officer.userId;
+                if (!user) return false;
+                const resolvedAccountStatus = user.isActive && officer.status === "active" ? "active" : "inactive";
+                if (searchRegex && ![user.username, user.email].some((value) => value && searchRegex.test(value))) {
+                    return false;
+                }
+                if (approvalStatus && (user.status || "approved") !== approvalStatus) return false;
+                if (accountStatus && resolvedAccountStatus !== accountStatus) return false;
+                return true;
+            }).map((officer) => ({
+                _id: officer._id,
+                username: officer.userId.username,
+                email: officer.userId.email,
+                approvalStatus: officer.userId.status || "approved",
+                accountStatus: officer.userId.isActive && officer.status === "active" ? "active" : "inactive",
+            }));
+
+            return res.status(200).json({
+                success: true,
+                count: filteredAccounts.length,
+                data: filteredAccounts,
+            });
+        }
+
         let officers = await Officer.find()
             .populate("userId", "username email isActive role status")
             .select("-__v");
@@ -801,9 +831,9 @@ const deleteOfficer = async (req, res) => {
             message: "Officer deactivated successfully",
             data: {
                 id: officer._id,
-                officerId: officer.officerId,
                 status: officer.status,
                 isActive: user.isActive,
+                ...(req.authority?.systemRole === "system_admin" ? {} : { officerId: officer.officerId }),
             },
         });
     } catch (error) {

@@ -17,6 +17,7 @@ let app;
 const password = "Authority@123";
 const tokens = {};
 const officers = {};
+let accountStatusTarget;
 
 const rankFixture = {
     investigating_officer: "authority-investigating",
@@ -108,6 +109,27 @@ test.before(async () => {
             isActive: true,
         });
     }
+    const targetUser = await User.create({
+        username: "authority-status-target",
+        email: "authority-status-target@crms.test",
+        passwordHash,
+        role: "officer",
+        status: "approved",
+        isActive: true,
+    });
+    accountStatusTarget = await Officer.create({
+        userId: targetUser._id,
+        officerId: "AUTH-TARGET-001",
+        badgeNumber: "TARG01",
+        name: "Account Status Target",
+        rank: "investigating_officer",
+        department: "Criminal Investigation",
+        station: "Authority Station",
+        phoneNumber: "5550201001",
+        address: "Authority Target Avenue",
+        joiningDate: "2020-01-01",
+        status: "active",
+    });
     await User.create({
         username: "authority-inactive",
         email: "authority-inactive@crms.test",
@@ -208,4 +230,80 @@ test("pending, rejected, and inactive officers cannot log in", async () => {
             .send({ username, password });
         assert.equal(response.status, 403, `${username} must not log in`);
     }
+});
+
+test("Officer Management permissions follow rank and system role", async () => {
+    const deniedList = await request(app)
+        .get("/api/officers")
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`);
+    const deniedDetails = await request(app)
+        .get(`/api/officers/${officers.inspector._id}`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`);
+    const deniedStatus = await request(app)
+        .patch(`/api/officers/${accountStatusTarget._id}/status`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({ accountStatus: "inactive" });
+    assert.equal(deniedList.status, 403);
+    assert.equal(deniedDetails.status, 403);
+    assert.equal(deniedStatus.status, 403);
+
+    for (const rank of ["inspector", "dsp", "sp"]) {
+        const list = await request(app)
+            .get("/api/officers")
+            .set("Authorization", `Bearer ${tokens[rank]}`);
+        const details = await request(app)
+            .get(`/api/officers/${officers[rank]._id}`)
+            .set("Authorization", `Bearer ${tokens[rank]}`);
+        assert.equal(list.status, 200, `${rank} can list officers`);
+        assert.equal(details.status, 200, `${rank} can view officer details`);
+        assert.ok(list.body.data.some((record) => record.rank === "investigating_officer"));
+
+        const deactivate = await request(app)
+            .patch(`/api/officers/${accountStatusTarget._id}/status`)
+            .set("Authorization", `Bearer ${tokens[rank]}`)
+            .send({ accountStatus: "inactive" });
+        assert.equal(deactivate.status, 200, `${rank} can deactivate accounts`);
+        const activate = await request(app)
+            .patch(`/api/officers/${accountStatusTarget._id}/status`)
+            .set("Authorization", `Bearer ${tokens[rank]}`)
+            .send({ accountStatus: "active" });
+        assert.equal(activate.status, 200, `${rank} can reactivate accounts`);
+    }
+
+    const adminList = await request(app)
+        .get("/api/officers")
+        .set("Authorization", `Bearer ${tokens.system_admin}`);
+    assert.equal(adminList.status, 200);
+    const adminAccount = adminList.body.data.find((record) => String(record._id) === String(accountStatusTarget._id));
+    assert.ok(adminAccount);
+    assert.deepEqual(Object.keys(adminAccount).sort(), ["_id", "accountStatus", "approvalStatus", "email", "username"]);
+    for (const forbiddenField of ["name", "rank", "department", "station", "phoneNumber", "address", "badgeNumber", "officerId"]) {
+        assert.equal(Object.hasOwn(adminAccount, forbiddenField), false, `system_admin list excludes ${forbiddenField}`);
+    }
+
+    const adminDetails = await request(app)
+        .get(`/api/officers/${accountStatusTarget._id}`)
+        .set("Authorization", `Bearer ${tokens.system_admin}`);
+    const adminEdit = await request(app)
+        .put(`/api/officers/${accountStatusTarget._id}`)
+        .set("Authorization", `Bearer ${tokens.system_admin}`)
+        .send({ name: "Must not update profile" });
+    assert.equal(adminDetails.status, 403);
+    assert.equal(adminEdit.status, 403);
+
+    const adminDeactivate = await request(app)
+        .patch(`/api/officers/${accountStatusTarget._id}/status`)
+        .set("Authorization", `Bearer ${tokens.system_admin}`)
+        .send({ accountStatus: "inactive" });
+    const adminActivate = await request(app)
+        .patch(`/api/officers/${accountStatusTarget._id}/status`)
+        .set("Authorization", `Bearer ${tokens.system_admin}`)
+        .send({ accountStatus: "active" });
+    assert.equal(adminDeactivate.status, 200);
+    assert.equal(adminActivate.status, 200);
+
+    const adminAssignableOfficers = await request(app)
+        .get("/api/officers/assignable")
+        .set("Authorization", `Bearer ${tokens.system_admin}`);
+    assert.equal(adminAssignableOfficers.status, 403);
 });

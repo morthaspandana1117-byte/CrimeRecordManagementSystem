@@ -42,8 +42,8 @@ function App() {
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedRanks={seniorOfficerRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
-      <Route path="/officers/:id" element={<ProtectedRoute allowedRanks={seniorOfficerRanks} allowSystemAdmin><OfficerDetails /></ProtectedRoute>} />
-      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedRanks={seniorOfficerRanks} allowSystemAdmin><OfficerEdit /></ProtectedRoute>} />
+      <Route path="/officers/:id" element={<ProtectedRoute allowedRanks={seniorOfficerRanks}><OfficerDetails /></ProtectedRoute>} />
+      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedRanks={seniorOfficerRanks}><OfficerEdit /></ProtectedRoute>} />
       <Route path="/criminals" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalList /></ProtectedRoute>} />
       <Route path="/criminals/add" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalAdd /></ProtectedRoute>} />
       <Route path="/criminals/:id" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalDetails /></ProtectedRoute>} />

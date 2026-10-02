@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const tls = require("tls");
 
 const getSMTPDiagnostics = () => ({
     SMTP_HOST: Boolean(process.env.SMTP_HOST),
@@ -29,6 +30,13 @@ const getTransporter = () => {
         port,
         secure: process.env.SMTP_SECURE === "true",
         auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+        tls: {
+            ca: [
+                ...tls.getCACertificates("default"),
+                ...tls.getCACertificates("system"),
+            ],
+            rejectUnauthorized: true,
+        },
     });
 };
 
@@ -65,11 +73,7 @@ const sendPasswordResetEmail = async (email, token) => {
     console.info("SMTP diagnostics:", getSMTPDiagnostics());
 
     if (!transporter) {
-        if (process.env.NODE_ENV === "production") {
-            throw new Error("SMTP configuration is required in production");
-        }
-        console.info(`Password reset URL for ${email}: ${resetUrl}`);
-        return;
+        throw new Error("SMTP configuration is required to send password reset instructions");
     }
 
     try {

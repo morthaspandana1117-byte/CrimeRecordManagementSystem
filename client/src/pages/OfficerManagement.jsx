@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
+import { isSystemAdmin } from '../authority'
 import {
   approveOfficer,
   getOfficers,
@@ -10,8 +11,9 @@ import {
 
 const requestMessage = (error, fallback) => error.response?.data?.message || (error.response ? fallback : 'Unable to reach the CRMS server. Please try again.')
 
-const getApprovalStatus = (officer) => officer?.userId?.status || 'approved'
+const getApprovalStatus = (officer) => officer?.approvalStatus || officer?.userId?.status || 'approved'
 const getAccountStatus = (officer) => {
+  if (officer?.accountStatus === 'active' || officer?.accountStatus === 'inactive') return officer.accountStatus
   if (officer?.userId?.isActive === false || officer?.status === 'inactive') return 'inactive'
   return 'active'
 }
@@ -27,7 +29,8 @@ const getBadgeClass = (value) => {
 }
 
 function OfficerManagement() {
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
+  const systemAdmin = isSystemAdmin(user)
   const navigate = useNavigate()
   const [officers, setOfficers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -69,7 +72,8 @@ function OfficerManagement() {
   const handleStatusToggle = async (officer) => {
     const currentAccountStatus = getAccountStatus(officer)
     const nextStatus = currentAccountStatus === 'active' ? 'inactive' : 'active'
-    const confirmed = window.confirm(`Are you sure you want to ${nextStatus === 'active' ? 'activate' : 'deactivate'} this officer?\n\n${officer.name}`)
+    const accountName = officer.name || officer.username || officer.email || 'this account'
+    const confirmed = window.confirm(`Are you sure you want to ${nextStatus === 'active' ? 'activate' : 'deactivate'} this officer?\n\n${accountName}`)
     if (!confirmed) return
 
     try {
@@ -88,7 +92,8 @@ function OfficerManagement() {
 
   const handleReview = async (officer, action) => {
     const actionText = action === 'approve' ? 'approve' : 'reject'
-    const confirmed = window.confirm(`Are you sure you want to ${actionText} this officer registration?\n\n${officer.name}`)
+    const accountName = officer.name || officer.username || officer.email || 'this account'
+    const confirmed = window.confirm(`Are you sure you want to ${actionText} this officer registration?\n\n${accountName}`)
     if (!confirmed) return
 
     try {
@@ -123,7 +128,7 @@ function OfficerManagement() {
             </div>
           </div>
           <div className="d-flex flex-wrap gap-2">
-            <button className="btn btn-outline-light" onClick={() => navigate('/admin/dashboard')} type="button">Dashboard</button>
+            <button className="btn btn-outline-light" onClick={() => navigate(systemAdmin ? '/admin/dashboard' : '/dashboard')} type="button">Dashboard</button>
             <button className="btn btn-outline-light" onClick={handleLogout} type="button">Log out</button>
           </div>
         </div>
@@ -133,7 +138,7 @@ function OfficerManagement() {
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div>
             <p className="eyebrow mb-1">Officer Management</p>
-            <h2 className="section-title mb-0">Officer registrations</h2>
+            <h2 className="section-title mb-0">{systemAdmin ? 'Officer accounts' : 'Officer registrations'}</h2>
           </div>
         </div>
 
@@ -200,11 +205,9 @@ function OfficerManagement() {
             <table className="table table-hover align-middle mb-0">
               <thead>
                 <tr>
-                  <th>Officer</th>
-                  <th>Username</th>
-                  <th>Batch No.</th>
+                  {systemAdmin ? <th>Account</th> : <><th>Officer</th><th>Username</th><th>Batch No.</th></>}
                   <th>Approval</th>
-                  <th>Account</th>
+                  <th>Account Status</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -216,21 +219,12 @@ function OfficerManagement() {
 
                   return (
                     <tr key={officer._id}>
-                      <td>
-                        <div className="fw-semibold">{officer.name || 'Unnamed officer'}</div>
-                        <small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small>
-                      </td>
-                      <td>{officer.userId?.username || 'Not available'}</td>
-                      <td>
-                        <div>{officer.badgeNumber || '—'}</div>
-                        <small className="text-secondary">ID: {officer.officerId || '—'}</small>
-                      </td>
+                      {systemAdmin ? <td><div className="fw-semibold">{officer.username || 'Account'}</div><small className="text-secondary">{officer.email || 'Email unavailable'}</small></td> : <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small></td><td>{officer.userId?.username || 'Not available'}</td><td><div>{officer.badgeNumber || '—'}</div><small className="text-secondary">ID: {officer.officerId || '—'}</small></td></>}
                       <td><span className={getBadgeClass(approvalStatus)}>{approvalStatus}</span></td>
                       <td><span className={getBadgeClass(accountStatus)}>{accountStatus}</span></td>
                       <td>
                         <div className="action-stack">
-                          <button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/officers/${officer._id}`)} type="button">View</button>
-                          <button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Update</button>
+                          {!systemAdmin && <><button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/officers/${officer._id}`)} type="button">View</button><button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Update</button></>}
                           <button className="btn btn-sm btn-outline-warning" disabled={isActionBusy} onClick={() => handleStatusToggle(officer)} type="button">
                             {isActionBusy ? 'Working...' : accountStatus === 'active' ? 'Deactivate' : 'Activate'}
                           </button>
