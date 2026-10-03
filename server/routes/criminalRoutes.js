@@ -13,7 +13,6 @@ router.patch("/:id/status", controller.updateCriminalStatus);
 router
     .route("/:id")
     .get(controller.getCriminalById)
-    .put(controller.updateCriminal)
-    .delete(controller.deleteCriminal);
+    .put(controller.updateCriminal);
 
 module.exports = router;

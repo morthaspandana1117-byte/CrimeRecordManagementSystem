@@ -78,6 +78,27 @@ const evidenceSchema = new mongoose.Schema(
             default: "Collected",
         },
 
+        verificationStatus: {
+            type: String,
+            enum: ["unverified", "verified", "rejected"],
+            default: "unverified",
+            index: true,
+        },
+
+        verifiedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+        },
+
+        verifiedAt: {
+            type: Date,
+        },
+
+        verificationNotes: {
+            type: String,
+            trim: true,
+        },
+
         createdBy: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "User",

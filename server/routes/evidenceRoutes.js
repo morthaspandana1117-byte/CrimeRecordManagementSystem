@@ -11,6 +11,8 @@ router.use(requireAuthority({ ranks: OFFICER_RANKS }));
 
 router.route("/").post(controller.createEvidence).get(controller.getAllEvidence);
 router.patch("/:id/status", controller.updateEvidenceStatus);
+router.patch("/:id/verify", requireAuthority({ ranks: ["inspector", "dsp", "sp"] }), controller.verifyEvidence);
+router.get("/:id/download", controller.downloadEvidence);
 router
     .route("/:id")
     .get(controller.getEvidenceById)

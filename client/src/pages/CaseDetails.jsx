@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { isSeniorOfficer } from '../authority'
-import { getCaseById, getEvidence, reopenCase } from '../services/api'
+import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, verifyEvidence } from '../services/api'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -14,10 +14,14 @@ function CaseDetails() {
   const { user } = useAuth()
   const [record, setRecord] = useState(null)
   const [evidence, setEvidence] = useState([])
+  const [caseHistory, setCaseHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
+  const [caseHistoryError, setCaseHistoryError] = useState('')
   const [reopening, setReopening] = useState(false)
+  const [rejectingEvidenceId, setRejectingEvidenceId] = useState('')
+  const [rejectionReason, setRejectionReason] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -32,6 +36,13 @@ function CaseDetails() {
       } catch (requestError) {
         setEvidence([])
         setEvidenceError(message(requestError, 'Related evidence could not be loaded.'))
+      }
+      try {
+        const historyResponse = await getCaseHistory(id)
+        setCaseHistory(Array.isArray(historyResponse.data?.data) ? historyResponse.data.data : [])
+      } catch (requestError) {
+        setCaseHistory([])
+        setCaseHistoryError(message(requestError, 'Case history could not be loaded.'))
       }
     } catch (requestError) {
       setError(message(requestError, 'Could not load case details.'))
@@ -51,6 +62,49 @@ function CaseDetails() {
       setError(message(requestError, 'Could not reopen this Case.'))
     } finally {
       setReopening(false)
+    }
+  }
+
+  const handleDownloadEvidence = async (item) => {
+    try {
+      const response = await downloadEvidence(item._id)
+      const fileUrl = response.data?.data?.downloadUrl || response.data?.data?.fileUrl || response.data?.downloadUrl || response.data?.fileUrl
+      if (!fileUrl) {
+        setEvidenceError('This evidence item does not contain a downloadable file.')
+        return
+      }
+      window.open(fileUrl, '_blank', 'noopener,noreferrer')
+    } catch (requestError) {
+      setEvidenceError(message(requestError, 'This evidence file could not be downloaded.'))
+    }
+  }
+
+  const handleVerifyEvidence = async (item, nextStatus) => {
+    if (nextStatus === 'rejected') {
+      setRejectingEvidenceId(item._id)
+      setRejectionReason('')
+      return
+    }
+    try {
+      const note = 'Verified by senior officer'
+      await verifyEvidence(item._id, { verificationStatus: nextStatus, verificationNotes: note })
+      await load()
+    } catch (requestError) {
+      setEvidenceError(message(requestError, 'Could not update evidence verification.'))
+    }
+  }
+
+  const handleRejectEvidence = async (item, event) => {
+    event.preventDefault()
+    const note = rejectionReason.trim()
+    if (!note) return
+    try {
+      await verifyEvidence(item._id, { verificationStatus: 'rejected', verificationNotes: note })
+      setRejectingEvidenceId('')
+      setRejectionReason('')
+      await load()
+    } catch (requestError) {
+      setEvidenceError(message(requestError, 'Could not update evidence verification.'))
     }
   }
 
@@ -97,7 +151,53 @@ function CaseDetails() {
             <div className="fir-detail-card mt-4">
               <div className="detail-section-header d-flex align-items-center justify-content-between gap-3"><h3>Related Evidence</h3>{record.status !== 'Closed' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/evidence/create?caseId=${id}`)} type="button">+ Add Evidence</button>}</div>
               {evidenceError && <div className="alert alert-warning" role="alert">{evidenceError}</div>}
-              {evidence.length ? evidence.map((item) => <div className="border rounded p-3 mb-2" key={item._id}><strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong><div>{displayValue(item.description)}</div><div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)}</div></div>) : <p className="mb-0">No evidence linked to this case.</p>}
+              {evidence.length ? evidence.map((item) => (
+                <div className="border rounded p-3 mb-2" key={item._id}>
+                  <div className="d-flex flex-column flex-md-row justify-content-between gap-2 align-items-md-center">
+                    <strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong>
+                    <div className="d-flex gap-2 flex-wrap">
+                      {item.fileUrl && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
+                      {isSeniorOfficer(user) && (
+                        <>
+                          <button className="btn btn-sm btn-success" disabled={item.verificationStatus === 'verified'} onClick={() => handleVerifyEvidence(item, 'verified')} type="button">Verify</button>
+                          <button className="btn btn-sm btn-outline-danger" disabled={item.verificationStatus === 'rejected'} onClick={() => handleVerifyEvidence(item, 'rejected')} type="button">Reject</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div>{displayValue(item.description)}</div>
+                  <div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)} · Verification: {item.verificationStatus || 'unverified'}</div>
+                  {item.verificationNotes && <div className="small text-secondary mt-1">Note: {item.verificationNotes}</div>}
+                  {item.verifiedAt && <div className="small text-secondary">Verified on {date(item.verifiedAt)}</div>}
+                  {rejectingEvidenceId === item._id && (
+                    <form className="mt-3" onSubmit={(event) => handleRejectEvidence(item, event)}>
+                      <label className="form-label" htmlFor={`rejection-reason-${item._id}`}>Reason for rejecting this evidence</label>
+                      <textarea autoFocus className="form-control mb-2" id={`rejection-reason-${item._id}`} onChange={(event) => setRejectionReason(event.target.value)} required rows="2" value={rejectionReason} />
+                      <div className="d-flex gap-2">
+                        <button className="btn btn-sm btn-danger" type="submit">Confirm rejection</button>
+                        <button className="btn btn-sm btn-outline-secondary" onClick={() => setRejectingEvidenceId('')} type="button">Cancel</button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )) : <p className="mb-0">No evidence linked to this case.</p>}
+            </div>
+            <div className="fir-detail-card mt-4">
+              <div className="detail-section-header"><h3>Case History</h3></div>
+              {caseHistoryError && <div className="alert alert-warning" role="alert">{caseHistoryError}</div>}
+              {caseHistory.length ? caseHistory.map((entry) => (
+                <div className="border rounded p-3 mb-2" key={entry._id || `${entry.actionType}-${entry.timestamp}`}>
+                  <div className="d-flex justify-content-between gap-3 align-items-center flex-wrap">
+                    <strong>{entry.actionType || 'Case event'}</strong>
+                    <span className="small text-secondary">{date(entry.timestamp)}</span>
+                  </div>
+                  <div>{entry.description}</div>
+                  {entry.performedBy?.username && <div className="small text-secondary">By {entry.performedBy.username}</div>}
+                  {entry.performedByRank && <div className="small text-secondary">Role: {entry.performedByRank}</div>}
+                  {entry.previousValue && <div className="small text-secondary">Previous: {JSON.stringify(entry.previousValue)}</div>}
+                  {entry.newValue && <div className="small text-secondary">Updated: {JSON.stringify(entry.newValue)}</div>}
+                </div>
+              )) : <p className="mb-0">No case history recorded yet.</p>}
             </div>
             {record.investigationHistory?.length > 0 && <div className="fir-detail-card mt-4"><div className="detail-section-header"><h3>Investigation History</h3></div>{record.investigationHistory.map((round) => { const roundEvidence = evidence.filter((item) => item.investigationRound === round.round); return <div className="border rounded p-3 mb-3" key={round.round}><strong>Investigation Round {round.round}</strong><div className="small text-secondary">Started: {date(round.startedAt)} · Closed: {date(round.closedAt)} · {displayValue(round.status)}</div>{round.reopenReason && <div>Reason: {round.reopenReason}</div>}<div className="mt-2">{roundEvidence.length ? roundEvidence.map((item) => <div key={item._id}>{item.evidenceId} · {item.type}</div>) : 'No evidence recorded in this round.'}</div></div> })}</div>}
           </>

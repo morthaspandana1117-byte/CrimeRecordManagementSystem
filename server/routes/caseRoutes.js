@@ -18,10 +18,10 @@ router.route("/").post(controller.createCase).get(controller.getAllCases);
 router.patch("/:id/assign-officers", controller.assignCaseOfficers);
 router.patch("/:id/reopen", requireAuthority({ ranks: SENIOR_OFFICER_RANKS }), controller.reopenCase);
 router.patch("/:id/status", controller.updateCaseStatus);
+router.get("/:id/history", controller.getCaseHistory);
 router
     .route("/:id")
     .get(controller.getCaseById)
-    .put(controller.updateCase)
-    .delete(controller.deleteCase);
+    .put(controller.updateCase);
 
 module.exports = router;

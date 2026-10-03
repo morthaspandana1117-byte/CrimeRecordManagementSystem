@@ -2,6 +2,7 @@ const Case = require("../models/Case");
 const FIR = require("../models/FIR");
 const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
+const CaseHistory = require("../models/CaseHistory");
 const {
     isValidObjectId,
     isNonEmptyString,
@@ -107,6 +108,37 @@ const normalizeCasePriority = (value) => {
 };
 
 const validateCasePriority = (value) => normalizeCasePriority(value) !== null;
+
+const appendCaseHistory = async ({
+    caseId,
+    actionType,
+    description,
+    performedBy,
+    performedByRole,
+    performedByRank,
+    previousValue,
+    newValue,
+    metadata,
+    performedByOfficer,
+}) => {
+    if (!caseId || !actionType || !description) {
+        return null;
+    }
+
+    return CaseHistory.create({
+        caseId,
+        actionType,
+        description,
+        performedBy,
+        performedByRole,
+        performedByRank,
+        previousValue: previousValue ?? null,
+        newValue: newValue ?? null,
+        metadata: metadata ?? null,
+        performedByOfficer,
+        timestamp: new Date(),
+    });
+};
 
 const buildCaseQueryFilters = ({ search, status, priority } = {}) => {
     const filter = {};
@@ -320,6 +352,26 @@ const createCase = async (req, res) => {
                 : {}),
         }];
         const record = await Case.create(payload);
+        await appendCaseHistory({
+            caseId: record._id,
+            actionType: "case_created",
+            description: "Case created",
+            performedBy: req.user?.userId,
+            performedByRole: req.authority?.systemRole || req.user?.role,
+            performedByRank: req.authority?.rank,
+            performedByOfficer: req.authority?.officer?._id,
+            previousValue: null,
+            newValue: {
+                caseNo: record.caseNo,
+                title: record.title,
+                status: record.status,
+                priority: record.priority,
+            },
+            metadata: {
+                caseNo: record.caseNo,
+                firId: record.firId,
+            },
+        });
         const populatedRecord = await populate(Case.findById(record._id).select("-__v"));
 
         return res.status(201).json({
@@ -479,6 +531,36 @@ const updateCase = async (req, res) => {
             }).select("-__v"),
         );
 
+        if (record) {
+            const changedFields = Object.keys(updates).filter((field) => {
+                const previous = existingRecord?.[field];
+                const current = record?.[field];
+                return JSON.stringify(previous) !== JSON.stringify(current);
+            });
+
+            if (changedFields.length) {
+                const previousValue = Object.fromEntries(
+                    changedFields.map((field) => [field, existingRecord?.[field]]),
+                );
+                const newValue = Object.fromEntries(
+                    changedFields.map((field) => [field, record?.[field]]),
+                );
+
+                await appendCaseHistory({
+                    caseId: record._id,
+                    actionType: "case_updated",
+                    description: `Case details updated (${changedFields.join(", ")})`,
+                    performedBy: req.user?.userId,
+                    performedByRole: req.authority?.systemRole || req.user?.role,
+                    performedByRank: req.authority?.rank,
+                    performedByOfficer: req.authority?.officer?._id,
+                    previousValue,
+                    newValue,
+                    metadata: { changedFields },
+                });
+            }
+        }
+
         return record
             ? res.status(200).json({
                   success: true,
@@ -520,6 +602,7 @@ const assignCaseOfficers = async (req, res) => {
         const valid = await validateCaseOfficerEligibility(res, assignedOfficerIds);
         if (!valid) return undefined;
 
+        const previousAssignedOfficerIds = record.assignedOfficerIds.map((id) => String(id));
         const updated = await populate(
             Case.findByIdAndUpdate(
                 req.params.id,
@@ -527,6 +610,40 @@ const assignCaseOfficers = async (req, res) => {
                 { new: true, runValidators: true },
             ).select("-__v"),
         );
+
+        const nextAssignedOfficerIds = assignedOfficerIds.map((id) => String(id));
+        const addedOfficers = nextAssignedOfficerIds.filter((id) => !previousAssignedOfficerIds.includes(id));
+        const removedOfficers = previousAssignedOfficerIds.filter((id) => !nextAssignedOfficerIds.includes(id));
+
+        for (const officerId of addedOfficers) {
+            await appendCaseHistory({
+                caseId: record._id,
+                actionType: "officer_assigned",
+                description: "Officer assigned to case",
+                performedBy: req.user?.userId,
+                performedByRole: req.authority?.systemRole || req.user?.role,
+                performedByRank: req.authority?.rank,
+                performedByOfficer: req.authority?.officer?._id,
+                previousValue: null,
+                newValue: { officerId },
+                metadata: { assignmentAction: "assigned" },
+            });
+        }
+
+        for (const officerId of removedOfficers) {
+            await appendCaseHistory({
+                caseId: record._id,
+                actionType: "officer_unassigned",
+                description: "Officer unassigned from case",
+                performedBy: req.user?.userId,
+                performedByRole: req.authority?.systemRole || req.user?.role,
+                performedByRank: req.authority?.rank,
+                performedByOfficer: req.authority?.officer?._id,
+                previousValue: { officerId },
+                newValue: null,
+                metadata: { assignmentAction: "unassigned" },
+            });
+        }
 
         return res.status(200).json({
             success: true,
@@ -577,6 +694,7 @@ const updateCaseStatus = async (req, res) => {
             });
         }
 
+        const previousStatus = record.status;
         const currentRound = record.investigationHistory.find(
             (round) => round.round === record.currentInvestigationRound,
         );
@@ -592,6 +710,18 @@ const updateCaseStatus = async (req, res) => {
         }
         record.status = normalizedStatus;
         await record.save();
+        await appendCaseHistory({
+            caseId: record._id,
+            actionType: "case_status_changed",
+            description: `Case status changed from ${previousStatus} to ${normalizedStatus}`,
+            performedBy: req.user?.userId,
+            performedByRole: req.authority?.systemRole || req.user?.role,
+            performedByRank: req.authority?.rank,
+            performedByOfficer: req.authority?.officer?._id,
+            previousValue: { status: previousStatus },
+            newValue: { status: normalizedStatus },
+            metadata: { previousStatus, newStatus: normalizedStatus },
+        });
 
         const populatedRecord = await populate(
             Case.findById(record._id).select("-__v"),
@@ -661,6 +791,18 @@ const reopenCase = async (req, res) => {
         });
         record.status = "Reopened";
         await record.save();
+        await appendCaseHistory({
+            caseId: record._id,
+            actionType: "case_reopened",
+            description: `Case reopened (${reopenReason})`,
+            performedBy: req.user?.userId,
+            performedByRole: req.authority?.systemRole || req.user?.role,
+            performedByRank: req.authority?.rank,
+            performedByOfficer: req.authority?.officer?._id,
+            previousValue: { status: "Closed" },
+            newValue: { status: "Reopened", reopenReason },
+            metadata: { reopenReason, reopenedByRole: req.authority?.systemRole || req.user?.role },
+        });
 
         const populatedRecord = await populate(Case.findById(record._id).select("-__v"));
         return res.status(200).json({
@@ -692,6 +834,52 @@ const deleteCase = async (req, res) => {
     }
 };
 
+const getCaseHistory = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
+        }
+
+        const record = await Case.findById(req.params.id).select("assignedOfficerIds status");
+        if (!record) {
+            return notFound(res, "Case");
+        }
+
+        const isAssignedOfficer = record.assignedOfficerIds?.some(
+            (officerId) => String(officerId) === String(req.authority?.officer?._id),
+        );
+        if (req.authority?.rank === "investigating_officer" && !isAssignedOfficer) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only view history for assigned cases",
+                error: "CASE_HISTORY_ACCESS_DENIED",
+            });
+        }
+
+        if (req.authority?.systemRole === "system_admin") {
+            return res.status(403).json({
+                success: false,
+                message: "System admin users do not have operational case history access",
+                error: "CASE_HISTORY_ACCESS_DENIED",
+            });
+        }
+
+        const timeline = await CaseHistory.find({ caseId: req.params.id })
+            .sort({ timestamp: 1 })
+            .populate("performedBy", "username role")
+            .populate("performedByOfficer", "name officerId rank")
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            count: timeline.length,
+            data: timeline,
+        });
+    } catch (error) {
+        return handleError(res, error, "Get case history error");
+    }
+};
+
 module.exports = {
     createCase,
     getAllCases,
@@ -701,6 +889,8 @@ module.exports = {
     updateCaseStatus,
     reopenCase,
     deleteCase,
+    getCaseHistory,
+    appendCaseHistory,
     normalizeCaseStatus,
     validateCaseStatus,
     normalizeCasePriority,
