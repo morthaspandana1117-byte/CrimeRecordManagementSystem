@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
 
 const authRoutes = require("./routes/authRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
@@ -12,8 +13,26 @@ const reportRoutes = require("./routes/reportRoutes");
 
 const createApp = () => {
     const app = express();
+    const allowedOrigins = Array.from(new Set([
+        process.env.CLIENT_URL,
+        process.env.FRONTEND_URL,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ].filter(Boolean)));
 
-    app.use(cors());
+    app.disable("x-powered-by");
+    app.use(helmet({ crossOriginResourcePolicy: false }));
+    app.use(cors({
+        origin(origin, callback) {
+            if (!origin || allowedOrigins.includes(origin)) {
+                callback(null, true);
+                return;
+            }
+
+            callback(null, false);
+        },
+        credentials: true,
+    }));
     app.use(express.json());
 
     app.use("/api/auth", authRoutes);
@@ -34,7 +53,12 @@ const createApp = () => {
             });
         }
 
-        return next(error);
+        console.error("Unhandled API error:", error?.message || error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+            error: "INTERNAL_SERVER_ERROR",
+        });
     });
 
     app.get("/", (req, res) => {

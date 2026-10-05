@@ -67,7 +67,7 @@ const verifyTransporter = async (transporter) => {
 };
 
 const sendPasswordResetEmail = async (email, token) => {
-    const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password/${token}`;
+    const resetUrl = `${process.env.CLIENT_URL || process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password/${token}`;
     const transporter = getTransporter();
 
     console.info("SMTP diagnostics:", getSMTPDiagnostics());
