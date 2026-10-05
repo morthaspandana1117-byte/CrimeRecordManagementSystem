@@ -14,6 +14,7 @@ const Criminal = require('../models/Criminal');
 const FIR = require('../models/FIR');
 const Case = require('../models/Case');
 const Evidence = require('../models/Evidence');
+const EvidenceCustodyHistory = require('../models/EvidenceCustodyHistory');
 const CaseHistory = require('../models/CaseHistory');
 
 let mongoServer;
@@ -208,6 +209,180 @@ test('criminal, FIR, and evidence delete endpoints are unavailable and do not re
   assert.equal((await Evidence.findById(evidence._id))._id.toString(), evidence._id.toString());
 });
 
+test('evidence provenance and verification fields are server-controlled', async () => {
+  const evidence = await Evidence.create({
+    evidenceId: 'E-PROVENANCE-001',
+    caseId: assignedCase._id,
+    investigationRound: 1,
+    type: 'Document',
+    description: 'Provenance test evidence',
+    collectedBy: officers.investigating_officer._id,
+    collectionDate: '2026-10-06',
+    location: 'Evidence locker',
+    status: 'Collected',
+    createdBy: new mongoose.Types.ObjectId(),
+  });
+
+  const spoofedCollectedBy = await request(app)
+    .post('/api/evidence')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({
+      evidenceId: 'E-SPOOF-001',
+      caseId: assignedCase._id,
+      type: 'Document',
+      description: 'Spoofed collection attempt',
+      collectedBy: officers.inspector._id,
+      collectionDate: '2026-10-07',
+      location: 'Evidence locker',
+      status: 'Collected',
+    });
+  assert.equal(spoofedCollectedBy.status, 403);
+  assert.equal(await Evidence.exists({ evidenceId: 'E-SPOOF-001' }), null);
+
+  const spoofedCreatedBy = await request(app)
+    .post('/api/evidence')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({
+      evidenceId: 'E-CREATED-BY-001',
+      caseId: assignedCase._id,
+      type: 'Document',
+      description: 'CreatedBy spoofing attempt',
+      collectedBy: officers.investigating_officer._id,
+      collectionDate: '2026-10-08',
+      location: 'Evidence locker',
+      status: 'Collected',
+      createdBy: new mongoose.Types.ObjectId().toString(),
+    });
+  assert.equal(spoofedCreatedBy.status, 400);
+
+  const spoofedUpdatedBy = await request(app)
+    .put(`/api/evidence/${evidence._id}`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({
+      description: 'Updated by server only',
+      updatedBy: new mongoose.Types.ObjectId().toString(),
+    });
+  assert.equal(spoofedUpdatedBy.status, 400);
+
+  const directVerificationUpdate = await request(app)
+    .put(`/api/evidence/${evidence._id}`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({
+      description: 'Generic update attempt',
+      verificationStatus: 'verified',
+    });
+  assert.equal(directVerificationUpdate.status, 400);
+
+  const directStatusBypass = await request(app)
+    .patch(`/api/evidence/${evidence._id}/status`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({ status: 'Verified' });
+  assert.equal(directStatusBypass.status, 409);
+
+  const directVerifiedByImpersonation = await request(app)
+    .patch(`/api/evidence/${evidence._id}/status`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({
+      status: 'Stored',
+      verifiedBy: new mongoose.Types.ObjectId().toString(),
+    });
+  assert.equal(directVerifiedByImpersonation.status, 400);
+
+  const stored = await Evidence.findById(evidence._id).lean();
+  assert.equal(stored.createdBy?.toString(), evidence.createdBy?.toString());
+  assert.equal(stored.collectedBy?.toString(), officers.investigating_officer._id.toString());
+});
+
+test('evidence custody history is server-controlled and append-only', async () => {
+  await Case.findByIdAndUpdate(assignedCase._id, {
+    $addToSet: {
+      assignedOfficerIds: {
+        $each: [officers.inspector._id, officers.dsp._id, officers.sp._id],
+      },
+    },
+  });
+
+  const evidence = await Evidence.create({
+    evidenceId: 'E-CUSTODY-001',
+    caseId: assignedCase._id,
+    investigationRound: 1,
+    type: 'Document',
+    description: 'Custody chain evidence',
+    collectedBy: officers.investigating_officer._id,
+    currentCustodian: officers.investigating_officer._id,
+    collectionDate: '2026-10-11',
+    location: 'Locker A',
+    status: 'Collected',
+    verificationStatus: 'unverified',
+  });
+
+  const initialHistory = await request(app)
+    .get(`/api/evidence/${evidence._id}/custody`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`);
+  assert.equal(initialHistory.status, 200);
+  assert.equal(initialHistory.body.data.length, 1);
+  assert.equal(initialHistory.body.data[0].action, 'COLLECTED');
+  assert.equal(initialHistory.body.data[0].toCustodian.toString(), officers.investigating_officer._id.toString());
+
+  const invalidTransfer = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({ toOfficerId: officers.inspector._id, remarks: 'Fake transfer' });
+  assert.equal(invalidTransfer.status, 200);
+  assert.equal(invalidTransfer.body.data.previousCustodian.toString(), officers.investigating_officer._id.toString());
+  assert.equal(invalidTransfer.body.data.currentCustodian.toString(), officers.inspector._id.toString());
+
+  const actualTransfer = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .set('Authorization', `Bearer ${tokens.inspector}`)
+    .send({ toOfficerId: officers.dsp._id, remarks: 'Forwarded to DSP' });
+  assert.equal(actualTransfer.status, 200);
+  assert.equal(actualTransfer.body.data.previousCustodian.toString(), officers.inspector._id.toString());
+  assert.equal(actualTransfer.body.data.currentCustodian.toString(), officers.dsp._id.toString());
+
+  const historyCount = await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id });
+  assert.equal(historyCount, 3);
+
+  const spoofedUserId = new mongoose.Types.ObjectId().toString();
+  const invalidClientMetadata = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .set('Authorization', `Bearer ${tokens.dsp}`)
+    .send({
+      toOfficerId: officers.sp._id,
+      performedBy: spoofedUserId,
+      timestamp: '2099-01-01T00:00:00.000Z',
+      remarks: 'Spoofed transfer',
+    });
+  assert.equal(invalidClientMetadata.status, 200);
+  const latestEntry = await EvidenceCustodyHistory.find({ evidenceId: evidence._id }).sort({ timestamp: -1 }).limit(1).lean();
+  const dspUser = await User.findOne({ username: 'op-dsp' }).lean();
+  assert.equal(latestEntry[0].performedBy.toString(), dspUser._id.toString());
+  assert.notEqual(latestEntry[0].performedBy.toString(), spoofedUserId);
+
+  const unauthorizedCase = await Evidence.create({
+    evidenceId: 'E-CUSTODY-OUT-001',
+    caseId: new mongoose.Types.ObjectId(),
+    investigationRound: 1,
+    type: 'Document',
+    description: 'Out-of-scope custody event',
+    collectedBy: officers.investigating_officer._id,
+    currentCustodian: officers.investigating_officer._id,
+    collectionDate: '2026-10-12',
+    location: 'Locker B',
+    status: 'Collected',
+    verificationStatus: 'unverified',
+  });
+
+  const forbiddenCrossCaseTransfer = await request(app)
+    .post(`/api/evidence/${unauthorizedCase._id}/custody/transfer`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({ toOfficerId: officers.inspector._id, remarks: 'Cross case transfer' });
+  assert.equal(forbiddenCrossCaseTransfer.status, 404);
+
+  const currentEvidence = await Evidence.findById(evidence._id).lean();
+  assert.equal(currentEvidence.currentCustodian.toString(), officers.dsp._id.toString());
+});
+
 test('evidence download is authorized and verification is senior-only', async () => {
   const evidence = await Evidence.create({
     evidenceId: 'E-DOWNLOAD-001',
@@ -278,10 +453,60 @@ test('evidence download is authorized and verification is senior-only', async ()
     .send({ verificationStatus: 'rejected', verificationNotes: 'Admin verification attempt' });
   assert.equal(adminVerify.status, 403);
 
+  const spEvidence = await Evidence.create({
+    evidenceId: 'E-SP-VERIFY-001',
+    caseId: assignedCase._id,
+    investigationRound: 1,
+    type: 'Document',
+    description: 'SP verification test evidence',
+    collectedBy: officers.investigating_officer._id,
+    collectionDate: '2026-10-09',
+    location: 'Evidence locker C',
+    status: 'Collected',
+    verificationStatus: 'unverified',
+  });
+
+  const spVerify = await request(app)
+    .patch(`/api/evidence/${spEvidence._id}/verify`)
+    .set('Authorization', `Bearer ${tokens.sp}`)
+    .send({ verificationStatus: 'verified', verificationNotes: 'Verified by SP.' });
+  assert.equal(spVerify.status, 200);
+  assert.equal(spVerify.body.data.verificationStatus, 'verified');
+  assert.equal(spVerify.body.data.verifiedBy.toString(), officers.sp.userId.toString());
+  assert.ok(spVerify.body.data.verifiedAt);
+
   const stored = await Evidence.findById(evidence._id);
   assert.equal(stored.verificationStatus, 'verified');
   assert.ok(stored.verifiedAt);
   assert.equal(stored.verifiedBy?.toString(), officers.inspector.userId.toString());
+});
+
+test('rejected evidence cannot be re-verified through generic status updates', async () => {
+  const evidence = await Evidence.create({
+    evidenceId: 'E-REJECTED-GUARD-001',
+    caseId: assignedCase._id,
+    investigationRound: 1,
+    type: 'Photograph',
+    description: 'Guard against rejection bypass',
+    collectedBy: officers.investigating_officer._id,
+    collectionDate: '2026-10-10',
+    location: 'Rejection guard location',
+    status: 'Collected',
+    verificationStatus: 'rejected',
+    verificationNotes: 'Initial rejection',
+    verifiedBy: officers.dsp.userId,
+    verifiedAt: new Date(),
+  });
+
+  const genericStatusBypass = await request(app)
+    .patch(`/api/evidence/${evidence._id}/status`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({ status: 'Verified' });
+  assert.equal(genericStatusBypass.status, 409);
+
+  const stored = await Evidence.findById(evidence._id).lean();
+  assert.equal(stored.verificationStatus, 'rejected');
+  assert.equal(stored.status, 'Collected');
 });
 
 test('case history is persistent and chronological for relevant events', async () => {

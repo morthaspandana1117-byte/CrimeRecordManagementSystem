@@ -1,4 +1,5 @@
 const Evidence = require("../models/Evidence");
+const EvidenceCustodyHistory = require("../models/EvidenceCustodyHistory");
 const Case = require("../models/Case");
 const Officer = require("../models/Officer");
 const CaseHistory = require("../models/CaseHistory");
@@ -48,6 +49,15 @@ const fields = [
 ];
 
 const updateFields = ["description", "location", "fileUrl"];
+const serverControlledEvidenceFields = [
+    "createdBy",
+    "updatedBy",
+    "currentCustodian",
+    "verificationStatus",
+    "verifiedBy",
+    "verifiedAt",
+    "verificationNotes",
+];
 
 const required = [
     "evidenceId",
@@ -60,11 +70,31 @@ const required = [
     "status",
 ];
 
+const rejectServerControlledFields = (res, body, endpointName) => {
+    const forbiddenFields = Object.keys(body || {}).filter((field) =>
+        serverControlledEvidenceFields.includes(field),
+    );
+
+    if (forbiddenFields.length > 0) {
+        return invalid(
+            res,
+            `The following fields are server-controlled and cannot be set via ${endpointName}: ${forbiddenFields.join(", ")}`,
+            "FORBIDDEN_EVIDENCE_FIELD",
+        );
+    }
+
+    return null;
+};
+
 const populate = (query) =>
     query
         .populate("caseId", "caseNo title status")
         .populate(
             "collectedBy",
+            "officerId name rank department station status userId",
+        )
+        .populate(
+            "currentCustodian",
             "officerId name rank department station status userId",
         )
         .populate("createdBy", "username role")
@@ -259,6 +289,22 @@ const ensureEligibleOfficer = async (res, officerId) => {
     return { valid: true, officer };
 };
 
+const appendEvidenceCustodyEntry = async ({ evidenceId, caseId, action, fromCustodian, toCustodian, performedBy, performedByOfficer, remarks }) => {
+    if (!evidenceId || !caseId || !action) return null;
+
+    return EvidenceCustodyHistory.create({
+        evidenceId,
+        caseId,
+        action,
+        fromCustodian: fromCustodian || null,
+        toCustodian: toCustodian || null,
+        performedBy,
+        performedByOfficer,
+        remarks: remarks || undefined,
+        timestamp: new Date(),
+    });
+};
+
 const validateEvidence = async (res, body, partial = false) => {
     if (
         !partial &&
@@ -343,9 +389,26 @@ const validateEvidence = async (res, body, partial = false) => {
 
 const createEvidence = async (req, res) => {
     try {
+        if (req.body.collectedBy && req.authority?.officer?._id) {
+            const requestedCollector = String(req.body.collectedBy);
+            const authenticatedOfficerId = String(req.authority.officer._id);
+            if (requestedCollector !== authenticatedOfficerId) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Evidence collector must match the authenticated officer identity",
+                    error: "COLLECTED_BY_IMPERSONATION",
+                });
+            }
+        }
+
+        const forbiddenResponse = rejectServerControlledFields(res, req.body, "createEvidence");
+        if (forbiddenResponse) return forbiddenResponse;
+
         const payload = Object.fromEntries(
             Object.entries(req.body).filter(([key]) => fields.includes(key)),
         );
+
+        payload.collectedBy = req.authority?.officer?._id || payload.collectedBy;
 
         const result = await validateEvidence(res, payload);
         if (result !== "OK") return result ? invalid(res, result) : undefined;
@@ -377,6 +440,11 @@ const createEvidence = async (req, res) => {
         payload.investigationRound = caseRecord.currentInvestigationRound;
         payload.createdBy = req.user?.userId;
         payload.verificationStatus = payload.verificationStatus || "unverified";
+
+        const resultAfterAuth = await validateEvidence(res, payload);
+        if (resultAfterAuth !== "OK") return resultAfterAuth ? invalid(res, resultAfterAuth) : undefined;
+
+        payload.currentCustodian = payload.collectedBy;
 
         const record = await Evidence.create(payload);
         await appendCaseHistory({
@@ -501,6 +569,17 @@ const updateEvidence = async (req, res) => {
             return res.status(403).json({ success: false, message: "You may only update evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
         }
 
+        const forbiddenResponse = rejectServerControlledFields(res, req.body, "updateEvidence");
+        if (forbiddenResponse) return forbiddenResponse;
+
+        if (Object.prototype.hasOwnProperty.call(req.body, "status")) {
+            return invalid(
+                res,
+                "status must be updated via the dedicated evidence status endpoint",
+                "INVALID_EVIDENCE_STATUS_ROUTE",
+            );
+        }
+
         const updates = Object.fromEntries(
             Object.entries(req.body).filter(([key]) => updateFields.includes(key)),
         );
@@ -545,6 +624,9 @@ const updateEvidenceStatus = async (req, res) => {
             return res.status(403).json({ success: false, message: "You may only update evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
         }
 
+        const forbiddenResponse = rejectServerControlledFields(res, req.body, "updateEvidenceStatus");
+        if (forbiddenResponse) return forbiddenResponse;
+
         const normalizedStatus = normalizeEvidenceStatus(req.body.status);
         if (normalizedStatus === null) {
             return invalid(
@@ -554,7 +636,15 @@ const updateEvidenceStatus = async (req, res) => {
             );
         }
 
-        const currentRecord = await Evidence.findById(req.params.id).select("status evidenceId caseId");
+        if (normalizedStatus === "Verified") {
+            return res.status(409).json({
+                success: false,
+                message: "Evidence can only be marked verified through the dedicated verification endpoint",
+                error: "VERIFICATION_REQUIRED",
+            });
+        }
+
+        const currentRecord = await Evidence.findById(req.params.id).select("status evidenceId caseId verificationStatus");
         const previousStatus = currentRecord?.status || null;
         const record = await populate(
             Evidence.findByIdAndUpdate(
@@ -632,6 +722,194 @@ const downloadEvidence = async (req, res) => {
         });
     } catch (error) {
         return handleError(res, error, "Download evidence error");
+    }
+};
+
+const getEvidenceCustodyHistory = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        }
+
+        const evidence = await Evidence.findById(req.params.id).select("caseId evidenceId");
+        if (!evidence) {
+            return notFound(res, "Evidence");
+        }
+
+        const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds");
+        if (!caseRecord) {
+            return notFound(res, "Case");
+        }
+        if (!canAccessCase(req, caseRecord)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only view custody for evidence in assigned cases",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
+        const history = await EvidenceCustodyHistory.find({ evidenceId: evidence._id })
+            .sort({ timestamp: 1 })
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            data: history,
+        });
+    } catch (error) {
+        return handleError(res, error, "Get evidence custody history error");
+    }
+};
+
+const transferEvidenceCustody = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        }
+
+        const targetOfficerId = req.body?.toOfficerId || req.body?.toCustodian || req.body?.targetOfficerId;
+        if (!targetOfficerId || !isValidObjectId(targetOfficerId)) {
+            return invalid(res, "A valid target officer is required", "INVALID_TARGET_OFFICER");
+        }
+
+        const evidence = await Evidence.findById(req.params.id).select("caseId currentCustodian collectedBy status evidenceId");
+        if (!evidence) {
+            return notFound(res, "Evidence");
+        }
+
+        const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds status");
+        if (!caseRecord) {
+            return notFound(res, "Case");
+        }
+        if (!canAccessCase(req, caseRecord)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only transfer evidence for assigned cases",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
+        if (caseRecord.status === "Closed") {
+            return res.status(409).json({
+                success: false,
+                message: "Reopen the case before transferring evidence",
+                error: "CASE_CLOSED",
+            });
+        }
+
+        const currentCustodianId = evidence.currentCustodian || evidence.collectedBy;
+        const actorOfficerId = req.authority?.officer?._id;
+        const actorRank = req.authority?.rank;
+        if (!actorOfficerId) {
+            return res.status(403).json({
+                success: false,
+                message: "A valid authenticated officer is required for custody transfer",
+                error: "OFFICER_REQUIRED",
+            });
+        }
+
+        const isCurrentCustodian = String(currentCustodianId) === String(actorOfficerId);
+        const isSeniorOfficer = !!actorRank && ["inspector", "dsp", "sp"].includes(actorRank);
+        if (!isCurrentCustodian && !isSeniorOfficer) {
+            return res.status(403).json({
+                success: false,
+                message: "Only the current custodian or a senior officer may transfer evidence",
+                error: "CUSTODY_TRANSFER_NOT_ALLOWED",
+            });
+        }
+
+        const targetOfficer = await Officer.findById(targetOfficerId).populate("userId", "status isActive role");
+        if (!targetOfficer) {
+            return notFound(res, "Officer");
+        }
+
+        if (targetOfficer.status !== "active") {
+            return res.status(403).json({
+                success: false,
+                message: "Target officer is not eligible to receive evidence",
+                error: "TARGET_OFFICER_INELIGIBLE",
+            });
+        }
+
+        if (!targetOfficer.userId || !targetOfficer.userId.isActive) {
+            return res.status(403).json({
+                success: false,
+                message: "Target officer account is inactive",
+                error: "TARGET_OFFICER_INACTIVE",
+            });
+        }
+
+        if (!caseRecord.assignedOfficerIds?.some((officerId) => String(officerId) === String(targetOfficer._id))) {
+            return res.status(403).json({
+                success: false,
+                message: "The target officer must be assigned to the same case",
+                error: "TARGET_OFFICER_OUT_OF_SCOPE",
+            });
+        }
+
+        if (String(targetOfficer._id) === String(currentCustodianId)) {
+            return res.status(409).json({
+                success: false,
+                message: "Evidence is already under the target custodian",
+                error: "CUSTODY_TRANSFER_REDUNDANT",
+            });
+        }
+
+        const hasClientMetadataTampering =
+            Object.prototype.hasOwnProperty.call(req.body, "performedBy") ||
+            Object.prototype.hasOwnProperty.call(req.body, "performedByOfficer") ||
+            Object.prototype.hasOwnProperty.call(req.body, "timestamp") ||
+            Object.prototype.hasOwnProperty.call(req.body, "createdAt") ||
+            Object.prototype.hasOwnProperty.call(req.body, "updatedAt");
+
+        const event = await appendEvidenceCustodyEntry({
+            evidenceId: evidence._id,
+            caseId: evidence.caseId,
+            action: "TRANSFERRED",
+            fromCustodian: currentCustodianId,
+            toCustodian: targetOfficer._id,
+            performedBy: req.user?.userId,
+            performedByOfficer: actorOfficerId,
+            remarks: typeof req.body?.remarks === "string" ? req.body.remarks.trim() : undefined,
+        });
+
+        if (!event) {
+            return res.status(500).json({
+                success: false,
+                message: "Failed to create custody history",
+                error: "CUSTODY_HISTORY_CREATE_FAILED",
+            });
+        }
+
+        if (hasClientMetadataTampering) {
+            return res.status(200).json({
+                success: true,
+                message: "Evidence custody metadata was sanitized and the transfer was not applied",
+                data: {
+                    evidenceId: evidence._id,
+                    previousCustodian: currentCustodianId,
+                    currentCustodian: currentCustodianId,
+                    event,
+                },
+            });
+        }
+
+        evidence.currentCustodian = targetOfficer._id;
+        evidence.updatedBy = req.user?.userId;
+        await evidence.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Evidence custody transferred successfully",
+            data: {
+                evidenceId: evidence._id,
+                previousCustodian: currentCustodianId,
+                currentCustodian: targetOfficer._id,
+                event,
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Transfer evidence custody error");
     }
 };
 
@@ -713,6 +991,8 @@ module.exports = {
     updateEvidenceStatus,
     downloadEvidence,
     verifyEvidence,
+    getEvidenceCustodyHistory,
+    transferEvidenceCustody,
     normalizeEvidenceStatus,
     validateEvidenceStatus,
     normalizeEvidenceType,

@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const EvidenceCustodyHistory = require("./EvidenceCustodyHistory");
 
 const evidenceSchema = new mongoose.Schema(
     {
@@ -46,6 +47,12 @@ const evidenceSchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
             required: true,
+        },
+
+        currentCustodian: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Officer",
+            index: true,
         },
 
         collectionDate: {
@@ -115,5 +122,31 @@ const evidenceSchema = new mongoose.Schema(
 );
 
 evidenceSchema.index({ caseId: 1, investigationRound: 1, collectionDate: -1 });
+
+evidenceSchema.pre("save", async function preSaveEvidence() {
+    if (!this.isNew || !this.currentCustodian) {
+        return;
+    }
+
+    const existing = await EvidenceCustodyHistory.findOne({
+        evidenceId: this._id,
+        action: "COLLECTED",
+        toCustodian: this.currentCustodian,
+    }).lean();
+
+    if (!existing) {
+        await EvidenceCustodyHistory.create({
+            evidenceId: this._id,
+            caseId: this.caseId,
+            action: "COLLECTED",
+            fromCustodian: null,
+            toCustodian: this.currentCustodian,
+            performedBy: this.createdBy || undefined,
+            performedByOfficer: this.currentCustodian,
+            remarks: "Evidence collected and recorded",
+            timestamp: new Date(),
+        });
+    }
+});
 
 module.exports = mongoose.model("Evidence", evidenceSchema);
