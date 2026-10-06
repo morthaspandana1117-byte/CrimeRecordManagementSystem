@@ -8,12 +8,28 @@ const Report = require("../models/Report");
 
 const getOfficerDashboardStats = async (req, res) => {
     try {
+        const isInvestigatingOfficer = req.authority?.rank === "investigating_officer";
+        const officerId = req.authority?.officer?._id;
+        const firFilter = isInvestigatingOfficer ? { registeredBy: officerId } : {};
+        const caseFilter = isInvestigatingOfficer
+            ? { assignedOfficerIds: officerId }
+            : {};
+        const reportFilter = officerId ? { preparedBy: officerId } : { _id: null };
+
+        // Evidence visibility follows the existing case assignment rule.
+        const authorizedCases = isInvestigatingOfficer
+            ? await Case.find(caseFilter).select("_id").lean()
+            : null;
+        const evidenceFilter = isInvestigatingOfficer
+            ? { caseId: { $in: authorizedCases.map((record) => record._id) } }
+            : {};
+
         const [totalFIRs, totalCases, totalEvidence, totalReports] =
             await Promise.all([
-            FIR.countDocuments(),
-            Case.countDocuments(),
-            Evidence.countDocuments(),
-            Report.countDocuments(),
+            FIR.countDocuments(firFilter),
+            Case.countDocuments(caseFilter),
+            Evidence.countDocuments(evidenceFilter),
+            Report.countDocuments(reportFilter),
         ]);
 
         res.status(200).json({
