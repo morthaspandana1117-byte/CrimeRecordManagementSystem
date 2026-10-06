@@ -23,7 +23,7 @@ import OfficerEdit from './pages/OfficerEdit'
 import OfficerManagement from './pages/OfficerManagement'
 import Register from './pages/Register'
 import ResetPassword from './pages/ResetPassword'
-import { officerRanks, seniorOfficerRanks } from './authority'
+import { officerRanks, seniorOfficerManagementRanks, seniorOfficerRanks } from './authority'
 
 function HomeRedirect() {
   const { isAuthenticated, loading, user } = useAuth()
@@ -41,9 +41,9 @@ function App() {
       <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
-      <Route path="/officers" element={<ProtectedRoute allowedRanks={seniorOfficerRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
-      <Route path="/officers/:id" element={<ProtectedRoute allowedRanks={seniorOfficerRanks}><OfficerDetails /></ProtectedRoute>} />
-      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedRanks={seniorOfficerRanks}><OfficerEdit /></ProtectedRoute>} />
+      <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
+      <Route path="/officers/:id" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerDetails /></ProtectedRoute>} />
+      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerEdit /></ProtectedRoute>} />
       <Route path="/criminals" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalList /></ProtectedRoute>} />
       <Route path="/criminals/add" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalAdd /></ProtectedRoute>} />
       <Route path="/criminals/:id" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalDetails /></ProtectedRoute>} />

@@ -676,9 +676,20 @@ const updateOfficerAccountStatus = async (req, res) => {
             return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
         }
 
-        const officer = await Officer.findById(req.params.id);
+        const officer = await Officer.findById(req.params.id).select("rank status userId");
         if (!officer) {
             return notFound(res, "Officer");
+        }
+
+        if (
+            req.authority?.systemRole !== "system_admin" &&
+            !canManageOfficerRank(req.authority?.managementRank, officer.rank)
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only change the account status of officers of a strictly lower rank",
+                error: "OFFICER_MANAGEMENT_DENIED",
+            });
         }
 
         const accountStatus = normalizeAccountStatus(req.body?.accountStatus);
@@ -707,18 +718,35 @@ const updateOfficerAccountStatus = async (req, res) => {
             });
         }
 
-        officer.status = accountStatus;
-        user.isActive = accountStatus === "active";
+        const officerUpdate = await Officer.updateOne(
+            { _id: officer._id, rank: officer.rank },
+            { $set: { status: accountStatus } },
+            { runValidators: true },
+        );
+        if (officerUpdate.matchedCount !== 1) {
+            return notFound(res, "Officer");
+        }
 
-        await officer.save();
-        await user.save();
+        const isActive = accountStatus === "active";
+        const userUpdate = await User.updateOne(
+            { _id: user._id, role: "officer" },
+            { $set: { isActive } },
+            { runValidators: true },
+        );
+        if (userUpdate.matchedCount !== 1) {
+            return res.status(404).json({
+                success: false,
+                message: "Linked officer account not found",
+                error: "USER_NOT_FOUND",
+            });
+        }
 
         return res.status(200).json({
             success: true,
             message: `Officer account ${accountStatus === "active" ? "activated" : "deactivated"} successfully`,
             data: {
                 id: officer._id,
-                accountStatus: user.isActive ? "active" : "inactive",
+                accountStatus: isActive ? "active" : "inactive",
                 approvalStatus: user.status || "approved",
             },
         });

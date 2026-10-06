@@ -3,7 +3,11 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
-const { normalizeOfficerRank, normalizeSystemRole } = require("../middleware/authority");
+const {
+    normalizeOfficerRank,
+    normalizeOfficerManagementRank,
+    normalizeSystemRole,
+} = require("../middleware/authority");
 const { sendPasswordResetEmail } = require("../services/emailService");
 const auditService = require("../services/auditService");
 
@@ -174,6 +178,7 @@ const login = async (req, res) => {
             ? await Officer.findOne({ userId: user._id }).select("rank")
             : null;
         const rank = officer ? normalizeOfficerRank(officer.rank) : null;
+        const managementRank = officer ? normalizeOfficerManagementRank(officer.rank) : null;
         const legacyRole = systemRole === "system_admin" ? "admin" : "officer";
 
         const token = jwt.sign(
@@ -183,6 +188,7 @@ const login = async (req, res) => {
                 role: legacyRole,
                 systemRole,
                 rank,
+                managementRank,
                 status: accountStatus,
             },
             process.env.JWT_SECRET,
@@ -204,6 +210,7 @@ const login = async (req, res) => {
                 role: legacyRole,
                 systemRole,
                 rank,
+                managementRank,
                 status: accountStatus,
             },
         });
@@ -246,6 +253,7 @@ const getMe = async (req, res) => {
                 role: systemRole === "system_admin" ? "admin" : "officer",
                 systemRole,
                 rank: officer ? normalizeOfficerRank(officer.rank) : null,
+                managementRank: officer ? normalizeOfficerManagementRank(officer.rank) : null,
                 status: user.status || "approved",
                 isActive: user.isActive,
             },

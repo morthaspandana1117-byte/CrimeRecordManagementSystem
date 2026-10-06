@@ -5,6 +5,7 @@ import { isSystemAdmin } from '../authority'
 import {
   approveOfficer,
   getOfficers,
+  getSubordinateOfficers,
   rejectOfficer,
   updateOfficerAccountStatus,
 } from '../services/api'
@@ -53,14 +54,16 @@ function OfficerManagement() {
     try {
       setLoading(true)
       setError('')
-      const response = await getOfficers(buildParams)
+      const response = systemAdmin
+        ? await getOfficers(buildParams)
+        : await getSubordinateOfficers(buildParams)
       setOfficers(Array.isArray(response.data?.data) ? response.data.data : [])
     } catch (requestError) {
       setError(requestMessage(requestError, 'Could not load officers.'))
     } finally {
       setLoading(false)
     }
-  }, [buildParams])
+  }, [buildParams, systemAdmin])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

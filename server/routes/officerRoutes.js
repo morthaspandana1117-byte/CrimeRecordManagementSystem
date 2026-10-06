@@ -15,6 +15,7 @@ const { authMiddleware } = require("../middleware/authMiddleware");
 const auditCapture = require("../middleware/auditCapture");
 const {
     OFFICER_RANKS,
+    OFFICER_MANAGEMENT_RANKS,
     resolveAuthority,
     requireAuthority,
 } = require("../middleware/authority");
@@ -26,12 +27,12 @@ router.use(resolveAuthority);
 router.use(auditCapture);
 router.get("/assignable", requireAuthority({ ranks: OFFICER_RANKS, systemRoles: ["system_admin"] }), getAssignableOfficers);
 router.get("/", requireAuthority({ systemRoles: ["system_admin"] }), getAllOfficers);
-router.get("/subordinates", requireAuthority({ ranks: OFFICER_RANKS }), getAllOfficers);
-router.get("/:id", requireAuthority({ ranks: OFFICER_RANKS, systemRoles: ["system_admin"] }), getOfficerById);
-router.put("/:id", requireAuthority({ ranks: OFFICER_RANKS }), updateOfficer);
+router.get("/subordinates", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS }), getAllOfficers);
+router.get("/:id", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS, systemRoles: ["system_admin"] }), getOfficerById);
+router.put("/:id", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS }), updateOfficer);
 router.patch("/:id/approve", requireAuthority({ systemRoles: ["system_admin"] }), approveOfficer);
 router.patch("/:id/reject", requireAuthority({ systemRoles: ["system_admin"] }), rejectOfficer);
-router.patch("/:id/status", requireAuthority({ systemRoles: ["system_admin"] }), updateOfficerAccountStatus);
+router.patch("/:id/status", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS, systemRoles: ["system_admin"] }), updateOfficerAccountStatus);
 router.patch("/:id/deactivate", requireAuthority({ systemRoles: ["system_admin"] }), deleteOfficer);
 router.delete("/:id", requireAuthority({ systemRoles: ["system_admin"] }), deleteOfficer);
 

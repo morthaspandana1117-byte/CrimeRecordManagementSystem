@@ -1,8 +1,8 @@
 import { Link, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { getRank, getSystemRole, isSystemAdmin } from '../authority'
+import { getManagementRank, getRank, getSystemRole, isSystemAdmin } from '../authority'
 
-function ProtectedRoute({ allowedRanks, allowedRoles, allowedSystemRoles, allowSystemAdmin = false, children }) {
+function ProtectedRoute({ allowedRanks, allowedManagementRanks, allowedRoles, allowedSystemRoles, allowSystemAdmin = false, children }) {
   const { isAuthenticated, loading, user } = useAuth()
   const location = useLocation()
   if (loading) {
@@ -14,8 +14,11 @@ function ProtectedRoute({ allowedRanks, allowedRoles, allowedSystemRoles, allowS
   const systemRoleAllowed = !allowedSystemRoles || allowedSystemRoles.includes(systemRole)
   const rank = getRank(user)
   const rankAllowed = !allowedRanks || allowedRanks.includes(rank)
-  const authorityAllowed = (allowedRanks || allowedSystemRoles)
-    ? (rankAllowed || (allowSystemAdmin && isSystemAdmin(user)) || (allowedSystemRoles?.includes(systemRole) ?? false))
+  const managementRank = getManagementRank(user)
+  const managementRankAllowed = !allowedManagementRanks || allowedManagementRanks.includes(managementRank)
+  const rankAuthorityAllowed = Boolean(allowedRanks && rankAllowed) || Boolean(allowedManagementRanks && managementRankAllowed)
+  const authorityAllowed = (allowedRanks || allowedManagementRanks || allowedSystemRoles)
+    ? (rankAuthorityAllowed || (allowSystemAdmin && isSystemAdmin(user)) || (allowedSystemRoles?.includes(systemRole) ?? false))
     : true
   if (!roleAllowed || !systemRoleAllowed || !authorityAllowed) {
     const destination = isSystemAdmin(user) ? '/admin/dashboard' : '/dashboard'

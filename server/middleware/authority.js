@@ -16,6 +16,7 @@ const OFFICER_RANK_HIERARCHY = [
     "head_constable",
     "constable",
 ];
+const OFFICER_MANAGEMENT_RANKS = ["sp", "dsp", "inspector", "si"];
 const SENIOR_OFFICER_RANKS = ["inspector", "dsp", "sp"];
 
 // Legacy operational tiers are retained for existing FIR/case/evidence rules.
@@ -162,12 +163,14 @@ const resolveAuthority = async (req, res, next) => {
     }
 };
 
-const requireAuthority = ({ ranks = [], systemRoles = [] } = {}) =>
+const requireAuthority = ({ ranks = [], managementRanks = [], systemRoles = [] } = {}) =>
     (req, res, next) => {
         const authority = req.authority;
         const rankAllowed = authority?.rank && ranks.includes(authority.rank);
+        const managementRankAllowed = authority?.managementRank &&
+            managementRanks.includes(authority.managementRank);
         const roleAllowed = authority?.systemRole && systemRoles.includes(authority.systemRole);
-        if (!rankAllowed && !roleAllowed) {
+        if (!rankAllowed && !managementRankAllowed && !roleAllowed) {
             return res.status(403).json({
                 success: false,
                 message: "You do not have permission to access this resource",
@@ -179,6 +182,7 @@ const requireAuthority = ({ ranks = [], systemRoles = [] } = {}) =>
 
 module.exports = {
     OFFICER_RANKS,
+    OFFICER_MANAGEMENT_RANKS,
     SENIOR_OFFICER_RANKS,
     OFFICER_RANK_HIERARCHY,
     normalizeOfficerRank,
