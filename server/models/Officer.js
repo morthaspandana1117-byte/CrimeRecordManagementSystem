@@ -34,17 +34,16 @@ const officerSchema = new mongoose.Schema(
             type: String,
             required: true,
             enum: [
-                "investigating_officer",
-                "inspector",
-                "dsp",
                 "sp",
-                // Legacy values remain valid until the rank migration runs.
-                "Constable",
-                "Head Constable",
-                "ASI",
-                "SI",
-                "Inspector",
-                "DSP",
+                "dsp",
+                "inspector",
+                "si",
+                "asi",
+                "head_constable",
+                "constable",
+                // Existing database records may still carry this ambiguous legacy value.
+                // New registration and profile APIs accept only the seven canonical values.
+                "investigating_officer",
             ],
         },
 

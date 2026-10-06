@@ -7,16 +7,55 @@ const OFFICER_RANKS = [
     "dsp",
     "sp",
 ];
+const OFFICER_RANK_HIERARCHY = [
+    "sp",
+    "dsp",
+    "inspector",
+    "si",
+    "asi",
+    "head_constable",
+    "constable",
+];
 const SENIOR_OFFICER_RANKS = ["inspector", "dsp", "sp"];
 
+// Legacy operational tiers are retained for existing FIR/case/evidence rules.
+// They are intentionally separate from the seven-level management hierarchy.
 const legacyRankAliases = {
+    investigating_officer: "investigating_officer",
     constable: "investigating_officer",
+    head_constable: "investigating_officer",
     "head constable": "investigating_officer",
     asi: "investigating_officer",
     si: "investigating_officer",
     inspector: "inspector",
     dsp: "dsp",
     sp: "sp",
+};
+
+const rankAliases = {
+    constable: "constable",
+    "head constable": "head_constable",
+    head_constable: "head_constable",
+    asi: "asi",
+    si: "si",
+    inspector: "inspector",
+    dsp: "dsp",
+    sp: "sp",
+};
+
+const normalizeOfficerManagementRank = (value) => {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toLowerCase();
+    return rankAliases[normalized] || null;
+};
+
+const canManageOfficerRank = (managerRank, targetRank) => {
+    const manager = normalizeOfficerManagementRank(managerRank);
+    const target = normalizeOfficerManagementRank(targetRank);
+    if (!manager || !target) return false;
+    const managerIndex = OFFICER_RANK_HIERARCHY.indexOf(manager);
+    const targetIndex = OFFICER_RANK_HIERARCHY.indexOf(target);
+    return managerIndex < 4 && managerIndex < targetIndex;
 };
 
 const normalizeOfficerRank = (value) => {
@@ -99,7 +138,15 @@ const resolveAuthority = async (req, res, next) => {
             }
         }
 
-        req.authority = { systemRole, rank, user, officer };
+        req.authority = {
+            systemRole,
+            rank,
+            // Ambiguous legacy "investigating_officer" values stay unresolved
+            // for management authorization instead of being assigned a rank.
+            managementRank: officer ? normalizeOfficerManagementRank(officer.rank) : null,
+            user,
+            officer,
+        };
         req.user.systemRole = systemRole;
         req.user.rank = rank;
         // Preserve the legacy JWT role for existing frontend/API consumers.
@@ -133,7 +180,10 @@ const requireAuthority = ({ ranks = [], systemRoles = [] } = {}) =>
 module.exports = {
     OFFICER_RANKS,
     SENIOR_OFFICER_RANKS,
+    OFFICER_RANK_HIERARCHY,
     normalizeOfficerRank,
+    normalizeOfficerManagementRank,
+    canManageOfficerRank,
     normalizeSystemRole,
     resolveAuthority,
     requireAuthority,

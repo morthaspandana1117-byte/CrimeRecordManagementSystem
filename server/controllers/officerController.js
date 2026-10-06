@@ -4,7 +4,10 @@ const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
 const auditService = require("../services/auditService");
-const { normalizeOfficerRank, OFFICER_RANKS } = require("../middleware/authority");
+const {
+    normalizeOfficerManagementRank,
+    canManageOfficerRank,
+} = require("../middleware/authority");
 
 const {
     isValidObjectId,
@@ -27,6 +30,12 @@ const officerFields = [
     "address",
     "joiningDate",
 ];
+
+const isManageableSubordinate = (req, officer) =>
+    req.authority?.systemRole === "officer" &&
+    String(req.authority?.officer?._id) !== String(officer?._id) &&
+    officer?.userId?.role === "officer" &&
+    canManageOfficerRank(req.authority?.managementRank, officer?.rank);
 
 const normalizeOfficerSearchValue = (value) => {
     if (typeof value !== "string") {
@@ -195,10 +204,11 @@ const registerOfficer = async (req, res) => {
             );
         }
 
-        if (!OFFICER_RANKS.includes(normalizeOfficerRank(rank)) || rank !== normalizeOfficerRank(rank)) {
+        const normalizedManagementRank = normalizeOfficerManagementRank(rank);
+        if (!normalizedManagementRank || rank !== normalizedManagementRank) {
             return invalid(
                 res,
-                "rank must be one of: investigating_officer, inspector, dsp, sp",
+                "rank must be one of: sp, dsp, inspector, si, asi, head_constable, constable",
                 "INVALID_OFFICER_RANK",
             );
         }
@@ -253,7 +263,7 @@ const registerOfficer = async (req, res) => {
             officerId: officerId.trim(),
             badgeNumber: batchNumber,
             name: name.trim(),
-            rank: normalizeOfficerRank(rank),
+            rank: normalizedManagementRank,
             department,
             station: station.trim(),
             phoneNumber: phoneNumber.trim(),
@@ -318,11 +328,11 @@ const getAllOfficers = async (req, res) => {
         if (req.authority?.systemRole === "system_admin") {
             const accounts = await Officer.find()
                 .select("userId status")
-                .populate("userId", "username email isActive status");
+                .populate("userId", "username email role isActive status");
 
             const filteredAccounts = accounts.filter((officer) => {
                 const user = officer.userId;
-                if (!user) return false;
+                if (!user || user.role !== "officer") return false;
                 const resolvedAccountStatus = user.isActive && officer.status === "active" ? "active" : "inactive";
                 if (searchRegex && ![user.username, user.email].some((value) => value && searchRegex.test(value))) {
                     return false;
@@ -346,8 +356,12 @@ const getAllOfficers = async (req, res) => {
         }
 
         let officers = await Officer.find()
-            .populate("userId", "username email isActive role status")
+            .populate("userId", "username email role isActive status")
             .select("-__v");
+
+        if (req.authority?.systemRole !== "system_admin") {
+            officers = officers.filter((officer) => isManageableSubordinate(req, officer));
+        }
 
         if (searchRegex) {
             officers = officers.filter((officer) => buildOfficerSearchMatch(officer, searchRegex));
@@ -388,11 +402,34 @@ const getOfficerById = async (req, res) => {
         }
 
         const officer = await Officer.findById(req.params.id)
-            .populate("userId", "username email isActive role status")
+            .populate("userId", "username email role isActive status")
             .select("-__v");
 
         if (!officer) {
             return notFound(res, "Officer");
+        }
+
+        if (req.authority?.systemRole === "system_admin") {
+            const user = officer.userId;
+            if (!user || user.role !== "officer") return notFound(res, "Officer");
+            return res.status(200).json({
+                success: true,
+                data: {
+                    _id: officer._id,
+                    username: user.username,
+                    email: user.email,
+                    approvalStatus: user.status || "approved",
+                    accountStatus: user.isActive && officer.status === "active" ? "active" : "inactive",
+                },
+            });
+        }
+
+        if (req.authority?.systemRole !== "system_admin" && !isManageableSubordinate(req, officer)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only access officers of a strictly lower rank",
+                error: "OFFICER_ACCESS_DENIED",
+            });
         }
 
         return res.status(200).json({
@@ -416,30 +453,42 @@ const updateOfficer = async (req, res) => {
             );
         }
 
-        const officer = await Officer.findById(req.params.id);
+        const officer = await Officer.findById(req.params.id)
+            .populate("userId", "username email role isActive status");
 
         if (!officer) {
             return notFound(res, "Officer");
         }
 
+        if (!isManageableSubordinate(req, officer)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only manage officers of a strictly lower rank",
+                error: "OFFICER_MANAGEMENT_DENIED",
+            });
+        }
+
+        const protectedFields = [
+            "rank", "username", "email", "password", "passwordHash",
+            "passwordResetToken", "passwordResetExpires", "systemRole", "role",
+            "isActive", "status", "createdBy", "updatedBy", "verifiedBy",
+            "audit", "auditLog", "jwt", "token",
+        ];
+        if (protectedFields.some((field) => Object.hasOwn(req.body || {}, field))) {
+            return res.status(403).json({
+                success: false,
+                message: "Officer profile updates cannot change rank or account security fields",
+                error: "PROTECTED_OFFICER_FIELD",
+            });
+        }
+
         const officerUpdates = Object.fromEntries(
             Object.entries(req.body).filter(([key]) =>
-                officerFields.includes(key)
+                officerFields.includes(key) && key !== "rank"
             )
         );
 
-        const userUpdates = Object.fromEntries(
-            Object.entries(req.body).filter(([key]) =>
-                ["username", "email"].includes(key)
-            )
-        );
-        const password = req.body.password;
-
-        if (
-            !Object.keys(officerUpdates).length &&
-            !Object.keys(userUpdates).length &&
-            password === undefined
-        ) {
+        if (!Object.keys(officerUpdates).length) {
             return invalid(
                 res,
                 "No valid officer fields were provided",
@@ -456,18 +505,6 @@ const updateOfficer = async (req, res) => {
                 "joiningDate must be a valid date",
                 "INVALID_DATE"
             );
-        }
-
-        if (officerUpdates.rank !== undefined) {
-            const normalizedRank = normalizeOfficerRank(officerUpdates.rank);
-            if (!normalizedRank) {
-                return invalid(
-                    res,
-                    "rank must be one of: investigating_officer, inspector, dsp, sp",
-                    "INVALID_OFFICER_RANK",
-                );
-            }
-            officerUpdates.rank = normalizedRank;
         }
 
         const stringFields = [
@@ -489,87 +526,6 @@ const updateOfficer = async (req, res) => {
                     `${field} must not be empty`,
                     "INVALID_FIELD"
                 );
-            }
-        }
-
-        if (
-            userUpdates.username !== undefined &&
-            !isNonEmptyString(userUpdates.username)
-        ) {
-            return invalid(
-                res,
-                "username must not be empty",
-                "INVALID_USERNAME"
-            );
-        }
-
-        if (userUpdates.email !== undefined) {
-            if (!isNonEmptyString(userUpdates.email)) {
-                return invalid(
-                    res,
-                    "email must not be empty",
-                    "INVALID_EMAIL"
-                );
-            }
-
-            userUpdates.email = userUpdates.email.toLowerCase();
-
-            if (
-                !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userUpdates.email)
-            ) {
-                return invalid(
-                    res,
-                    "email must be valid",
-                    "INVALID_EMAIL"
-                );
-            }
-        }
-
-        if (password !== undefined && (typeof password !== "string" || password.length < 6)) {
-            return invalid(
-                res,
-                "password must be at least 6 characters long",
-                "INVALID_PASSWORD"
-            );
-        }
-
-        const user = await User.findById(officer.userId);
-
-        if (!user) {
-            return res.status(404).json({
-                success: false,
-                message: "Linked user account not found",
-                error: "USER_NOT_FOUND",
-            });
-        }
-
-        if (Object.keys(userUpdates).length) {
-            const userDuplicateConditions = [];
-
-            if (userUpdates.username) {
-                userDuplicateConditions.push({
-                    username: userUpdates.username,
-                });
-            }
-
-            if (userUpdates.email) {
-                userDuplicateConditions.push({
-                    email: userUpdates.email,
-                });
-            }
-
-            if (
-                userDuplicateConditions.length &&
-                (await User.exists({
-                    _id: { $ne: officer.userId },
-                    $or: userDuplicateConditions,
-                }))
-            ) {
-                return res.status(409).json({
-                    success: false,
-                    message: "Username or email already exists",
-                    error: "USER_ALREADY_EXISTS",
-                });
             }
         }
 
@@ -601,25 +557,6 @@ const updateOfficer = async (req, res) => {
             });
         }
 
-        const newPasswordHash = password ? await bcrypt.hash(password, 10) : null;
-
-        if (Object.keys(userUpdates).length || newPasswordHash) {
-            const userUpdateData = { ...userUpdates };
-
-            if (newPasswordHash) {
-                userUpdateData.passwordHash = newPasswordHash;
-            }
-
-            await User.findByIdAndUpdate(
-                officer.userId,
-                userUpdateData,
-                {
-                    new: true,
-                    runValidators: true,
-                }
-            );
-        }
-
         const updatedOfficer = await Officer.findByIdAndUpdate(
             req.params.id,
             officerUpdates,
@@ -628,7 +565,7 @@ const updateOfficer = async (req, res) => {
                 runValidators: true,
             }
         )
-            .populate("userId", "username email isActive role status")
+            .populate("userId", "username email role isActive status")
             .select("-__v");
 
         return res.status(200).json({
@@ -692,8 +629,14 @@ const setOfficerApprovalStatus = (status, message) => async (req, res) => {
 
 const getAssignableOfficers = async (req, res) => {
     try {
+        // Admins have no operational assignment role. Keep the legacy endpoint
+        // response shape, but never disclose its operational officer dataset.
+        if (req.authority?.systemRole === "system_admin") {
+            return res.status(200).json({ success: true, count: 0, data: [] });
+        }
+
         const officers = await Officer.find()
-            .populate("userId", "username email isActive role status")
+            .populate("userId", "username email role isActive status")
             .select("-__v");
 
         const assignableOfficers = officers.filter((officer) => {
@@ -756,6 +699,14 @@ const updateOfficerAccountStatus = async (req, res) => {
             });
         }
 
+        if (user.role !== "officer") {
+            return res.status(400).json({
+                success: false,
+                message: "Only officer accounts can be activated or deactivated",
+                error: "INVALID_ACCOUNT_ROLE",
+            });
+        }
+
         officer.status = accountStatus;
         user.isActive = accountStatus === "active";
 
@@ -810,6 +761,14 @@ const deleteOfficer = async (req, res) => {
                 success: false,
                 message: "Linked user account not found",
                 error: "USER_NOT_FOUND",
+            });
+        }
+
+        if (user.role !== "officer") {
+            return res.status(400).json({
+                success: false,
+                message: "Only officer accounts can be deactivated",
+                error: "INVALID_ACCOUNT_ROLE",
             });
         }
 

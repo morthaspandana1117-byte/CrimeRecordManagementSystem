@@ -1,26 +1,31 @@
-require("dotenv").config();
-
 const mongoose = require("mongoose");
 const connectDB = require("../config/db");
 const Officer = require("../models/Officer");
 const User = require("../models/User");
-const { normalizeOfficerRank } = require("../middleware/authority");
+const { normalizeOfficerManagementRank } = require("../middleware/authority");
+
+const classifyOfficerRank = (rank) => {
+    const canonicalRank = normalizeOfficerManagementRank(rank);
+    return canonicalRank
+        ? { status: "migratable", canonicalRank }
+        : { status: "unresolved", canonicalRank: null };
+};
 
 const migrateOfficerRanks = async () => {
     await connectDB();
 
     const officers = await Officer.find().select("rank");
     let migrated = 0;
-    let unresolved = 0;
+    const unresolvedRanks = [];
 
     for (const officer of officers) {
-        const normalizedRank = normalizeOfficerRank(officer.rank);
-        if (!normalizedRank) {
-            unresolved += 1;
+        const classification = classifyOfficerRank(officer.rank);
+        if (classification.status === "unresolved") {
+            unresolvedRanks.push({ officerId: officer._id.toString(), rank: officer.rank });
             continue;
         }
-        if (officer.rank !== normalizedRank) {
-            officer.rank = normalizedRank;
+        if (officer.rank !== classification.canonicalRank) {
+            officer.rank = classification.canonicalRank;
             await officer.save();
             migrated += 1;
         }
@@ -33,16 +38,22 @@ const migrateOfficerRanks = async () => {
 
     console.log(JSON.stringify({
         migratedOfficerRanks: migrated,
-        unresolvedOfficerRanks: unresolved,
+        unresolvedOfficerRankCount: unresolvedRanks.length,
+        unresolvedOfficerRanks: unresolvedRanks,
         migratedSystemAdmins: adminResult.modifiedCount,
     }));
 };
 
-migrateOfficerRanks()
-    .catch((error) => {
-        console.error("Officer rank migration failed:", error.message);
-        process.exitCode = 1;
-    })
-    .finally(async () => {
-        await mongoose.connection.close();
-    });
+if (require.main === module) {
+    require("dotenv").config();
+    migrateOfficerRanks()
+        .catch((error) => {
+            console.error("Officer rank migration failed:", error.message);
+            process.exitCode = 1;
+        })
+        .finally(async () => {
+            await mongoose.connection.close();
+        });
+}
+
+module.exports = { classifyOfficerRank, migrateOfficerRanks };
