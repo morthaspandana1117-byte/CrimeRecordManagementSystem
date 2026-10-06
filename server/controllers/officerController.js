@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const auditService = require("../services/auditService");
 const { normalizeOfficerRank, OFFICER_RANKS } = require("../middleware/authority");
 
 const {
@@ -265,6 +266,16 @@ const registerOfficer = async (req, res) => {
 
         await session.commitTransaction();
 
+        await auditService.log({
+            actor: null,
+            action: "OFFICER_REGISTRATION_SUBMITTED",
+            entityType: "Officer",
+            entityId: officer._id,
+            after: officer,
+            method: req.method,
+            path: req.baseUrl + req.path,
+        }).catch((error) => console.error("Officer registration audit logging failed:", error.message));
+
         return res.status(201).json({
             success: true,
             message: "Registration submitted. Your account is pending admin approval.",
@@ -396,8 +407,6 @@ const getOfficerById = async (req, res) => {
 };
 
 const updateOfficer = async (req, res) => {
-    const session = await mongoose.startSession();
-
     try {
         if (!isValidObjectId(req.params.id)) {
             return invalid(
@@ -594,8 +603,6 @@ const updateOfficer = async (req, res) => {
 
         const newPasswordHash = password ? await bcrypt.hash(password, 10) : null;
 
-        session.startTransaction();
-
         if (Object.keys(userUpdates).length || newPasswordHash) {
             const userUpdateData = { ...userUpdates };
 
@@ -609,7 +616,6 @@ const updateOfficer = async (req, res) => {
                 {
                     new: true,
                     runValidators: true,
-                    session,
                 }
             );
         }
@@ -620,13 +626,10 @@ const updateOfficer = async (req, res) => {
             {
                 new: true,
                 runValidators: true,
-                session,
             }
         )
             .populate("userId", "username email isActive role status")
             .select("-__v");
-
-        await session.commitTransaction();
 
         return res.status(200).json({
             success: true,
@@ -634,15 +637,9 @@ const updateOfficer = async (req, res) => {
             data: updatedOfficer,
         });
     } catch (error) {
-        if (session.inTransaction()) {
-            await session.abortTransaction();
-        }
-
         console.error("Update officer error:", error);
 
         return handleError(res, error, "Update officer error");
-    } finally {
-        await session.endSession();
     }
 };
 

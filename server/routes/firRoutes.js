@@ -2,12 +2,14 @@ const express = require("express");
 const { authMiddleware } = require("../middleware/authMiddleware");
 const { OFFICER_RANKS, resolveAuthority, requireAuthority } = require("../middleware/authority");
 const controller = require("../controllers/firController");
+const auditCapture = require("../middleware/auditCapture");
 
 const router = express.Router();
 
 router.use(authMiddleware);
 router.use(resolveAuthority);
 router.use(requireAuthority({ ranks: OFFICER_RANKS }));
+router.use(auditCapture);
 
 router.route("/").post(controller.createFIR).get(controller.getAllFIRs);
 router.patch("/:id/status", controller.updateFIRStatus);

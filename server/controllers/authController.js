@@ -5,6 +5,12 @@ const User = require("../models/User");
 const Officer = require("../models/Officer");
 const { normalizeOfficerRank, normalizeSystemRole } = require("../middleware/authority");
 const { sendPasswordResetEmail } = require("../services/emailService");
+const auditService = require("../services/auditService");
+
+const recordAuthEvent = (event) => auditService.log(event).catch((error) => {
+    console.error("Authentication audit logging failed:", error.message);
+});
+const authRoutePath = (req) => req.baseUrl + (req.route?.path || "/unknown");
 
 const RESET_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
 const GENERIC_RESET_MESSAGE =
@@ -40,6 +46,7 @@ const forgotPassword = async (req, res) => {
         await user.save();
 
         await sendPasswordResetEmail(user.email, resetToken);
+        await recordAuthEvent({ actor: user._id, action: "PASSWORD_RESET_REQUESTED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
         return res.status(200).json({ success: true, message: GENERIC_RESET_MESSAGE });
     } catch (error) {
         console.error("Forgot password error:", error);
@@ -83,6 +90,8 @@ const resetPassword = async (req, res) => {
         user.passwordResetExpires = undefined;
         await user.save();
 
+        await recordAuthEvent({ actor: user._id, action: "PASSWORD_RESET_COMPLETED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
+
         return res.status(200).json({ success: true, message: "Password reset successful" });
     } catch (error) {
         console.error("Reset password error:", error);
@@ -108,6 +117,7 @@ const login = async (req, res) => {
         });
 
         if (!user) {
+            await recordAuthEvent({ actor: null, action: "LOGIN_FAILED", entityType: "Authentication", method: req.method, path: authRoutePath(req) });
             return res.status(401).json({
                 success: false,
                 message: "Invalid username or password",
@@ -116,6 +126,7 @@ const login = async (req, res) => {
         }
 
         if (!user.isActive) {
+            await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
             return res.status(403).json({
                 success: false,
                 message: "User account is inactive",
@@ -129,6 +140,7 @@ const login = async (req, res) => {
         );
 
         if (!isPasswordValid) {
+            await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
             return res.status(401).json({
                 success: false,
                 message: "Invalid username or password",
@@ -140,6 +152,7 @@ const login = async (req, res) => {
         // not have this field and remain able to sign in as approved users.
         const accountStatus = user.status || "approved";
         if (user.role === "officer" && accountStatus === "pending") {
+            await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
             return res.status(403).json({
                 success: false,
                 message: "Your account is pending admin approval.",
@@ -148,6 +161,7 @@ const login = async (req, res) => {
         }
 
         if (user.role === "officer" && accountStatus === "rejected") {
+            await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
             return res.status(403).json({
                 success: false,
                 message: "Your account was not approved. Please contact an administrator.",
@@ -176,6 +190,8 @@ const login = async (req, res) => {
                 expiresIn: "1d",
             },
         );
+
+        await recordAuthEvent({ actor: user._id, action: "LOGIN_SUCCEEDED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
 
         res.status(200).json({
             success: true,
