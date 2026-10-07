@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { isSeniorOfficer } from '../authority'
-import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, verifyEvidence } from '../services/api'
+import { getRank, seniorOfficerRanks, isSeniorOfficer } from '../authority'
+import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
 const displayValue = (item) => item || 'Not available'
+const canManageCaseLifecycle = (user) => seniorOfficerRanks.includes(getRank(user))
 
 function CaseDetails() {
   const { id } = useParams()
@@ -17,9 +18,15 @@ function CaseDetails() {
   const [caseHistory, setCaseHistory] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const [notice, setNotice] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
   const [caseHistoryError, setCaseHistoryError] = useState('')
   const [reopening, setReopening] = useState(false)
+  const [showReopenDialog, setShowReopenDialog] = useState(false)
+  const [reopenReason, setReopenReason] = useState('')
+  const [reopenReasonError, setReopenReasonError] = useState('')
+  const reopenRequestInFlight = useRef(false)
   const [rejectingEvidenceId, setRejectingEvidenceId] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
 
@@ -51,17 +58,57 @@ function CaseDetails() {
     }
   }, [id])
 
-  const handleReopen = async () => {
-    const reopenReason = window.prompt('Reason for reopening this Case:')?.trim()
-    if (!reopenReason) return
+  const openReopenDialog = () => {
+    setReopenReason('')
+    setReopenReasonError('')
+    setActionError('')
+    setShowReopenDialog(true)
+  }
+
+  const closeReopenDialog = () => {
+    if (reopenRequestInFlight.current) return
+    setShowReopenDialog(false)
+    setReopenReason('')
+    setReopenReasonError('')
+  }
+
+  const handleReopen = async (event) => {
+    event.preventDefault()
+    const trimmedReason = reopenReason.trim()
+    if (!trimmedReason) {
+      setReopenReasonError('Enter a reason for reopening this case.')
+      return
+    }
+    if (reopenRequestInFlight.current) return
+
+    reopenRequestInFlight.current = true
     try {
       setReopening(true)
-      await reopenCase(id, reopenReason)
+      setActionError('')
+      setReopenReasonError('')
+      const response = await reopenCase(id, trimmedReason)
+      if (response.data?.data) setRecord(response.data.data)
+      setShowReopenDialog(false)
+      setReopenReason('')
       await load()
+      setNotice('Case reopened successfully.')
     } catch (requestError) {
-      setError(message(requestError, 'Could not reopen this Case.'))
+      setActionError(message(requestError, 'Could not reopen this Case.'))
     } finally {
+      reopenRequestInFlight.current = false
       setReopening(false)
+    }
+  }
+
+  const handleClose = async () => {
+    if (!window.confirm('Close this case? It will become read-only until reopened.')) return
+    try {
+      setActionError('')
+      await updateCaseStatus(id, 'Closed')
+      await load()
+      setNotice('Case closed successfully.')
+    } catch (requestError) {
+      setActionError(message(requestError, 'Could not close this Case.'))
     }
   }
 
@@ -130,10 +177,37 @@ function CaseDetails() {
           <><div className="alert alert-danger" role="alert">{error || 'Case not found.'}</div><button className="btn btn-primary" onClick={load} type="button">Retry</button></>
         ) : (
           <>
+            {notice && <div className="alert alert-success" role="status">{notice}</div>}
+            {actionError && <div className="alert alert-danger" role="alert">{actionError}</div>}
             <section className="welcome-card mb-4">
               <div><p className="eyebrow mb-1">Case record</p><h2 className="mb-1">{record.caseNo}</h2><p className="mb-0 text-secondary">{record.title}</p></div>
-              <div className="d-flex gap-2">{isSeniorOfficer(user) && <button className="btn btn-primary" onClick={() => navigate(`/cases/${id}/edit`)} type="button">Edit Case</button>}{record.status === 'Closed' && isSeniorOfficer(user) && <button className="btn btn-warning" disabled={reopening} onClick={handleReopen} type="button">{reopening ? 'Reopening...' : 'Reopen Case'}</button>}</div>
+              <div className="d-flex gap-2">{record.status !== 'Closed' && canManageCaseLifecycle(user) && <><button className="btn btn-primary" onClick={() => navigate(`/cases/${id}/edit`)} type="button">Edit Case</button><button className="btn btn-outline-danger" onClick={handleClose} type="button">Close Case</button></>}{record.status === 'Closed' && canManageCaseLifecycle(user) && <button className="btn btn-warning" onClick={openReopenDialog} type="button">Reopen Case</button>}</div>
             </section>
+            {showReopenDialog && (
+              <div className="modal-backdrop show" role="presentation">
+                <div className="modal d-block" role="dialog" aria-modal="true" aria-labelledby="reopen-case-title">
+                  <div className="modal-dialog modal-dialog-centered">
+                    <div className="modal-content">
+                      <form onSubmit={handleReopen} noValidate>
+                        <div className="modal-header">
+                          <h2 className="modal-title fs-5" id="reopen-case-title">Reopen case</h2>
+                          <button className="btn-close" type="button" aria-label="Cancel reopening" disabled={reopening} onClick={closeReopenDialog} />
+                        </div>
+                        <div className="modal-body">
+                          <label className="form-label" htmlFor="reopen-reason">Reason for reopening</label>
+                          <textarea autoFocus className={`form-control${reopenReasonError ? ' is-invalid' : ''}`} id="reopen-reason" onChange={(event) => { setReopenReason(event.target.value); setReopenReasonError('') }} aria-describedby={reopenReasonError ? 'reopen-reason-error' : undefined} aria-invalid={Boolean(reopenReasonError)} rows="3" value={reopenReason} />
+                          {reopenReasonError && <div className="invalid-feedback d-block" id="reopen-reason-error" role="alert">{reopenReasonError}</div>}
+                        </div>
+                        <div className="modal-footer">
+                          <button className="btn btn-outline-secondary" type="button" disabled={reopening} onClick={closeReopenDialog}>Cancel</button>
+                          <button className="btn btn-warning" type="submit" disabled={reopening}>{reopening ? 'Reopening...' : 'Confirm Reopen'}</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="row g-4">
               <div className="col-12 col-lg-8">
                 <div className="fir-detail-card">

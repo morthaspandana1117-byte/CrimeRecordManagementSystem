@@ -468,7 +468,7 @@ const updateCase = async (req, res) => {
             return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
 
         const updates = Object.fromEntries(
-            Object.entries(req.body).filter(([key]) => fields.includes(key)),
+            Object.entries(req.body).filter(([key]) => fields.includes(key) && key !== "status"),
         );
 
         const existingRecord = await Case.findById(req.params.id).select("assignedOfficerIds status");
@@ -479,6 +479,14 @@ const updateCase = async (req, res) => {
                 message: "You may only update cases assigned to you",
                 error: "CASE_ACCESS_DENIED",
             });
+        }
+
+        if (existingRecord.status === "Closed") {
+            return conflict(res, "Closed cases are read-only. Reopen the case before editing", "CASE_CLOSED_READ_ONLY");
+        }
+
+        if (req.body.status !== undefined) {
+            return invalid(res, "Use the case status endpoint for lifecycle changes", "USE_CASE_STATUS_ENDPOINT");
         }
 
         if (!Object.keys(updates).length) {
@@ -586,6 +594,9 @@ const assignCaseOfficers = async (req, res) => {
         if (!canAccessCase(req, record)) {
             return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
         }
+        if (record.status === "Closed") {
+            return conflict(res, "Closed cases are read-only. Reopen the case before changing assignments", "CASE_CLOSED_READ_ONLY");
+        }
 
         const assignedOfficerIds = Array.isArray(req.body.assignedOfficerIds)
             ? req.body.assignedOfficerIds
@@ -680,8 +691,8 @@ const updateCaseStatus = async (req, res) => {
             return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
         }
 
-        if (record.status === "Closed" && normalizedStatus !== "Closed") {
-            return conflict(res, "Use the reopen endpoint before changing a closed Case", "CASE_REOPEN_REQUIRED");
+        if (record.status === "Closed") {
+            return conflict(res, "Closed cases are read-only. Reopen the case before changing its status", "CASE_CLOSED_READ_ONLY");
         }
 
         if (!record.currentInvestigationRound) {

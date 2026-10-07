@@ -190,6 +190,26 @@ test("persists the complete evidence lifecycle across case reopening", async () 
     assert.equal(createdCase.currentInvestigationRound, 1);
     assert.equal(createdCase.investigationHistory.length, 1);
 
+    const activeEdit = await request(app)
+        .put(`/api/cases/${global.caseId}`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ title: "Active case edit" });
+    assert.equal(activeEdit.status, 200);
+    assert.equal(activeEdit.body.data.title, "Active case edit");
+
+    const genericClose = await request(app)
+        .put(`/api/cases/${global.caseId}`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ status: "Closed" });
+    assert.equal(genericClose.status, 400);
+    assert.equal((await Case.findById(global.caseId)).status, "Open");
+
+    const reopenAlreadyOpen = await request(app)
+        .patch(`/api/cases/${global.caseId}/reopen`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ reopenReason: "This case is already open" });
+    assert.equal(reopenAlreadyOpen.status, 409);
+
     await createEvidence(officerToken, "E-001", "2026-09-03");
     await createEvidence(officerToken, "E-002", "2026-09-04");
     await createEvidence(officerToken, "E-003", "2026-09-05");
@@ -203,6 +223,26 @@ test("persists the complete evidence lifecycle across case reopening", async () 
     assert.equal(closeOne.status, 200);
     assert.equal((await Case.findById(global.caseId)).status, "Closed");
     assert.equal((await evidenceSnapshot()).length, 3);
+
+    const closedEdit = await request(app)
+        .put(`/api/cases/${global.caseId}`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ title: "Attempted closed-case edit" });
+    assert.equal(closedEdit.status, 409);
+    assert.equal(closedEdit.body.error, "CASE_CLOSED_READ_ONLY");
+
+    const closedStatusChange = await request(app)
+        .patch(`/api/cases/${global.caseId}/status`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ status: "Open" });
+    assert.equal(closedStatusChange.status, 409);
+    assert.equal((await Case.findById(global.caseId)).status, "Closed");
+
+    const closedAssignmentChange = await request(app)
+        .patch(`/api/cases/${global.caseId}/assign-officers`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ assignedOfficerIds: [officer._id.toString()] });
+    assert.equal(closedAssignmentChange.status, 409);
 
     const blockedEvidence = await request(app)
         .post("/api/evidence")
@@ -240,6 +280,13 @@ test("persists the complete evidence lifecycle across case reopening", async () 
     assert.ok(reopenedCase.investigationHistory[0].reopenedAt);
     assert.ok(reopenedCase.investigationHistory[0].reopenedBy);
     assert.equal(reopenedCase._id.toString(), global.caseId.toString());
+
+    const editableAfterReopen = await request(app)
+        .put(`/api/cases/${global.caseId}`)
+        .set("Authorization", `Bearer ${officerToken}`)
+        .send({ title: "Edited after authorized reopen" });
+    assert.equal(editableAfterReopen.status, 200);
+    assert.equal(editableAfterReopen.body.data.title, "Edited after authorized reopen");
 
     await createEvidence(officerToken, "E-004", "2026-09-25");
     await createEvidence(officerToken, "E-005", "2026-09-26");

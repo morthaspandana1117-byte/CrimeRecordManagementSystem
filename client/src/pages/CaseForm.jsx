@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { casePriorities, caseStatuses } from './caseConstants'
 
-function CaseForm({ initialForm, firs, officers, criminals, loading, submitLabel, onSubmit, onCancel }) {
+function CaseForm({ initialForm, firs, officers, criminals, loading, submitLabel, onSubmit, onCancel, hideStatus = false }) {
   const [form, setForm] = useState(initialForm)
   const [error, setError] = useState('')
 
@@ -35,7 +35,7 @@ function CaseForm({ initialForm, firs, officers, criminals, loading, submitLabel
         <div className="col-12"><label className="form-label" htmlFor="title">Case title</label><input className="form-control" id="title" name="title" onChange={updateField} required value={form.title} /></div>
         <div className="col-12 col-md-6"><label className="form-label" htmlFor="firId">Related FIR</label><select className="form-select" id="firId" name="firId" onChange={updateField} value={form.firId}><option value="">Select an FIR</option>{firs.map((fir) => <option key={fir._id} value={fir._id}>{fir.firNo} - {fir.policeStation || fir.crimeType || 'FIR'}</option>)}</select>{!firs.length && <small className="text-secondary">No FIR records are available.</small>}</div>
         <div className="col-12 col-md-3"><label className="form-label" htmlFor="priority">Priority</label><select className="form-select" id="priority" name="priority" onChange={updateField} value={form.priority}>{casePriorities.map((value) => <option key={value}>{value}</option>)}</select></div>
-        <div className="col-12 col-md-3"><label className="form-label" htmlFor="status">Status</label><select className="form-select" id="status" name="status" onChange={updateField} value={form.status}>{caseStatuses.map((value) => <option key={value}>{value}</option>)}</select></div>
+        {!hideStatus && <div className="col-12 col-md-3"><label className="form-label" htmlFor="status">Status</label><select className="form-select" id="status" name="status" onChange={updateField} value={form.status}>{caseStatuses.map((value) => <option key={value}>{value}</option>)}</select></div>}
         <div className="col-12"><label className="form-label" htmlFor="description">Description</label><textarea className="form-control" id="description" name="description" onChange={updateField} required rows="3" value={form.description} /></div>
         <div className="col-12"><label className="form-label" htmlFor="investigationNotes">Investigation notes</label><textarea className="form-control" id="investigationNotes" name="investigationNotes" onChange={updateField} rows="3" value={form.investigationNotes} /></div>
         <div className="col-12 col-lg-6"><label className="form-label">Assigned officers</label>{officers.length ? officers.map((officer) => <button className={`btn w-100 mb-2 ${form.assignedOfficerIds.includes(officer._id) ? 'btn-primary' : 'btn-outline-secondary'}`} key={officer._id} onClick={() => toggleValue('assignedOfficerIds', officer._id)} type="button">{officer.name} ({officer.badgeNumber || officer.officerId || 'Officer'})</button>) : <div className="alert alert-warning">No approved and active officers are available for assignment.</div>}</div>
