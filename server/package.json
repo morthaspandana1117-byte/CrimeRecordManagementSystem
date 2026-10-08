@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "seed:admin": "node scripts/seedAdmin.js",
     "migrate:ranks": "node scripts/migrateOfficerRanks.js"
   },
@@ -16,11 +16,13 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "exceljs": "4.4.0",
     "express": "^5.2.1",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.3",
-    "nodemailer": "^7.0.13"
+    "nodemailer": "^7.0.13",
+    "pdfkit": "^0.20.2"
   },
   "devDependencies": {
     "mongodb-memory-server": "^11.3.0",

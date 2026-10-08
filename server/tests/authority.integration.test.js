@@ -11,6 +11,7 @@ const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
 const Case = require("../models/Case");
+const Report = require("../models/Report");
 
 let mongoServer;
 let app;
@@ -178,7 +179,7 @@ test("recognizes all distinct officer ranks and protects operational boundaries"
     const inspectorOfficerManagement = await request(app)
         .get("/api/officers")
         .set("Authorization", `Bearer ${tokens.inspector}`);
-    assert.equal(inspectorOfficerManagement.status, 200);
+    assert.equal(inspectorOfficerManagement.status, 403);
 
     const systemAdminOperationalCases = await request(app)
         .get("/api/cases")
@@ -223,6 +224,19 @@ test("only Inspector, DSP, and SP can reopen cases", async () => {
     assert.equal(unauthenticated.status, 401);
 });
 
+test("all case-edit ranks are blocked from editing a closed case", async () => {
+    const record = await createClosedCase("AUTH-CLOSED-EDIT", [officers.investigating_officer._id]);
+    for (const rank of ["investigating_officer", "inspector", "dsp", "sp"]) {
+        const response = await request(app)
+            .put(`/api/cases/${record._id}`)
+            .set("Authorization", `Bearer ${tokens[rank]}`)
+            .send({ title: `Attempt by ${rank}` });
+        assert.equal(response.status, 409, `${rank} must not edit a closed case`);
+        assert.equal(response.body.error, "CASE_CLOSED_READ_ONLY");
+    }
+    assert.equal((await Case.findById(record._id)).title, "Authority test case");
+});
+
 test("pending, rejected, and inactive officers cannot log in", async () => {
     for (const username of ["authority-pending", "authority-rejected", "authority-inactive"]) {
         const response = await request(app)
@@ -232,42 +246,21 @@ test("pending, rejected, and inactive officers cannot log in", async () => {
     }
 });
 
-test("Officer Management permissions follow rank and system role", async () => {
-    const deniedList = await request(app)
-        .get("/api/officers")
-        .set("Authorization", `Bearer ${tokens.investigating_officer}`);
-    const deniedDetails = await request(app)
-        .get(`/api/officers/${officers.inspector._id}`)
-        .set("Authorization", `Bearer ${tokens.investigating_officer}`);
-    const deniedStatus = await request(app)
-        .patch(`/api/officers/${accountStatusTarget._id}/status`)
-        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
-        .send({ accountStatus: "inactive" });
-    assert.equal(deniedList.status, 403);
-    assert.equal(deniedDetails.status, 403);
-    assert.equal(deniedStatus.status, 403);
-
-    for (const rank of ["inspector", "dsp", "sp"]) {
-        const list = await request(app)
+test("Officer Management permissions follow system role, not officer rank", async () => {
+    for (const rank of ["investigating_officer", "inspector", "dsp", "sp"]) {
+        const deniedList = await request(app)
             .get("/api/officers")
             .set("Authorization", `Bearer ${tokens[rank]}`);
-        const details = await request(app)
+        const deniedDetails = await request(app)
             .get(`/api/officers/${officers[rank]._id}`)
             .set("Authorization", `Bearer ${tokens[rank]}`);
-        assert.equal(list.status, 200, `${rank} can list officers`);
-        assert.equal(details.status, 200, `${rank} can view officer details`);
-        assert.ok(list.body.data.some((record) => record.rank === "investigating_officer"));
-
-        const deactivate = await request(app)
+        const deniedStatus = await request(app)
             .patch(`/api/officers/${accountStatusTarget._id}/status`)
             .set("Authorization", `Bearer ${tokens[rank]}`)
             .send({ accountStatus: "inactive" });
-        assert.equal(deactivate.status, 200, `${rank} can deactivate accounts`);
-        const activate = await request(app)
-            .patch(`/api/officers/${accountStatusTarget._id}/status`)
-            .set("Authorization", `Bearer ${tokens[rank]}`)
-            .send({ accountStatus: "active" });
-        assert.equal(activate.status, 200, `${rank} can reactivate accounts`);
+        assert.equal(deniedList.status, 403, `${rank} must not list officers`);
+        assert.equal(deniedDetails.status, 403, `${rank} must not view officer details`);
+        assert.equal(deniedStatus.status, 403, `${rank} must not change officer account status`);
     }
 
     const adminList = await request(app)
@@ -277,19 +270,11 @@ test("Officer Management permissions follow rank and system role", async () => {
     const adminAccount = adminList.body.data.find((record) => String(record._id) === String(accountStatusTarget._id));
     assert.ok(adminAccount);
     assert.deepEqual(Object.keys(adminAccount).sort(), ["_id", "accountStatus", "approvalStatus", "email", "username"]);
-    for (const forbiddenField of ["name", "rank", "department", "station", "phoneNumber", "address", "badgeNumber", "officerId"]) {
-        assert.equal(Object.hasOwn(adminAccount, forbiddenField), false, `system_admin list excludes ${forbiddenField}`);
-    }
 
     const adminDetails = await request(app)
         .get(`/api/officers/${accountStatusTarget._id}`)
         .set("Authorization", `Bearer ${tokens.system_admin}`);
-    const adminEdit = await request(app)
-        .put(`/api/officers/${accountStatusTarget._id}`)
-        .set("Authorization", `Bearer ${tokens.system_admin}`)
-        .send({ name: "Must not update profile" });
-    assert.equal(adminDetails.status, 403);
-    assert.equal(adminEdit.status, 403);
+    assert.equal(adminDetails.status, 200);
 
     const adminDeactivate = await request(app)
         .patch(`/api/officers/${accountStatusTarget._id}/status`)
@@ -305,5 +290,102 @@ test("Officer Management permissions follow rank and system role", async () => {
     const adminAssignableOfficers = await request(app)
         .get("/api/officers/assignable")
         .set("Authorization", `Bearer ${tokens.system_admin}`);
-    assert.equal(adminAssignableOfficers.status, 403);
+    assert.equal(adminAssignableOfficers.status, 200);
+});
+
+test("report creation rejects a spoofed preparedBy value instead of trusting client input", async () => {
+    const caseRecord = await Case.findOne({ caseNo: "AUTH-ASSIGNED-001" }).lean();
+    const response = await request(app)
+        .post("/api/reports")
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({
+            reportId: "RPT-SEC-002",
+            caseId: caseRecord._id.toString(),
+            preparedBy: officers.dsp._id.toString(),
+            reportType: "Progress Report",
+            title: "Authenticated author test",
+            content: "This report should be rejected because the client tried to spoof the author.",
+            reportDate: "2026-09-12",
+            status: "Draft",
+        });
+
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error, "REPORT_PREPARED_BY_FORBIDDEN");
+});
+
+test("investigating officers can update reports only for cases assigned to them", async () => {
+    const assignedCase = await createClosedCase(
+        "AUTH-REPORT-ASSIGNED-001",
+        [officers.investigating_officer._id],
+    );
+    const secondAssignedCase = await createClosedCase(
+        "AUTH-REPORT-ASSIGNED-002",
+        [officers.investigating_officer._id],
+    );
+    const unassignedCase = await createClosedCase("AUTH-REPORT-UNASSIGNED-001", []);
+    const report = await Report.create({
+        reportId: "AUTH-REPORT-UPDATE-001",
+        caseId: assignedCase._id,
+        preparedBy: officers.investigating_officer._id,
+        reportType: "Progress Report",
+        title: "Assignment update test",
+        content: "Report content",
+        reportDate: "2026-09-12",
+        status: "Draft",
+    });
+
+    const keepAssignedCase = await request(app)
+        .put(`/api/reports/${report._id}`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({ caseId: assignedCase._id.toString(), title: "Updated assigned case" });
+    assert.equal(keepAssignedCase.status, 200);
+    assert.equal(String(keepAssignedCase.body.data.caseId._id), String(assignedCase._id));
+
+    const unassignedChange = await request(app)
+        .put(`/api/reports/${report._id}`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({ caseId: unassignedCase._id.toString() });
+    assert.equal(unassignedChange.status, 403);
+    assert.equal(unassignedChange.body.error, "REPORT_CASE_ACCESS_DENIED");
+    assert.equal(String((await Report.findById(report._id)).caseId), String(assignedCase._id));
+
+    const assignedChange = await request(app)
+        .put(`/api/reports/${report._id}`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({ caseId: secondAssignedCase._id.toString() });
+    assert.equal(assignedChange.status, 200);
+    assert.equal(String(assignedChange.body.data.caseId._id), String(secondAssignedCase._id));
+
+    const spoofedCaseChange = await request(app)
+        .put(`/api/reports/${report._id}`)
+        .set("Authorization", `Bearer ${tokens.investigating_officer}`)
+        .send({
+            caseId: unassignedCase._id.toString(),
+            preparedBy: officers.investigating_officer._id.toString(),
+            userId: officers.inspector._id.toString(),
+            rank: "sp",
+            systemRole: "system_admin",
+        });
+    assert.equal(spoofedCaseChange.status, 403);
+    assert.equal(spoofedCaseChange.body.error, "REPORT_CASE_ACCESS_DENIED");
+    const unchanged = await Report.findById(report._id).lean();
+    assert.equal(String(unchanged.caseId), String(secondAssignedCase._id));
+    assert.equal(String(unchanged.preparedBy), String(officers.investigating_officer._id));
+
+    const seniorReport = await Report.create({
+        reportId: "AUTH-REPORT-UPDATE-SENIOR",
+        caseId: assignedCase._id,
+        preparedBy: officers.inspector._id,
+        reportType: "Progress Report",
+        title: "Senior update test",
+        content: "Report content",
+        reportDate: "2026-09-12",
+        status: "Draft",
+    });
+    const seniorChange = await request(app)
+        .put(`/api/reports/${seniorReport._id}`)
+        .set("Authorization", `Bearer ${tokens.inspector}`)
+        .send({ caseId: unassignedCase._id.toString() });
+    assert.equal(seniorChange.status, 200);
+    assert.equal(String(seniorChange.body.data.caseId._id), String(unassignedCase._id));
 });
