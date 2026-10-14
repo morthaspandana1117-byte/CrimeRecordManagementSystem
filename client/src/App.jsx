@@ -22,6 +22,7 @@ import OfficerDetails from './pages/OfficerDetails'
 import OfficerEdit from './pages/OfficerEdit'
 import OfficerManagement from './pages/OfficerManagement'
 import Register from './pages/Register'
+import Reports from './pages/Reports'
 import ResetPassword from './pages/ResetPassword'
 import { officerRanks, seniorOfficerManagementRanks, seniorOfficerRanks } from './authority'
 
@@ -40,6 +41,7 @@ function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute allowedRanks={officerRanks}><Reports /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
       <Route path="/officers/:id" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerDetails /></ProtectedRoute>} />
