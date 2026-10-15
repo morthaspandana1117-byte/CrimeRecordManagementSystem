@@ -70,6 +70,7 @@ function Dashboard() {
           <button className="btn btn-primary" onClick={() => navigate('/criminals')} type="button">Criminals</button>
           <button className="btn btn-outline-primary" onClick={() => navigate('/firs')} type="button">FIRs</button>
           <button className="btn btn-outline-primary" onClick={() => navigate('/cases')} type="button">{isSeniorOfficer(user) ? 'Manage Cases' : 'My Cases'}</button>
+          <button className="btn btn-outline-primary" onClick={() => navigate('/reports')} type="button">Reports</button>
           {isSeniorOfficer(user) && <button className="btn btn-outline-primary" onClick={() => navigate('/officers')} type="button">Manage Officers</button>}
         </div>
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">

@@ -35,8 +35,16 @@ export const registerOfficer = (officer) => api.post('/auth/register', officer)
 export const getCurrentUser = () => api.get('/auth/me')
 export const getDashboardStats = () => api.get('/dashboard/stats')
 export const getAdminDashboardStats = () => api.get('/dashboard/admin/stats')
+export const getCrimeStatistics = (params = {}, config = {}) => api.get('/reports/crime-statistics', { ...config, params })
+export const getMonthlyReport = (params, config = {}) => api.get('/reports/monthly', { ...config, params })
+export const getOfficerPerformance = (params = {}, config = {}) => api.get('/reports/officer-performance', { ...config, params })
+export const exportReport = (format, type, params = {}, config = {}) => api.get(`/reports/export/${format}`, {
+  ...config,
+  params: { ...params, type },
+  responseType: 'blob',
+})
 export const getOfficers = (params = {}) => api.get('/officers', { params })
-export const getSubordinateOfficers = (params = {}) => api.get('/officers/subordinates', { params })
+export const getSubordinateOfficers = (params = {}, config = {}) => api.get('/officers/subordinates', { ...config, params })
 export const getOfficerById = (id) => api.get(`/officers/${id}`)
 export const updateOfficer = (id, officer) => api.put(`/officers/${id}`, officer)
 export const updateOfficerAccountStatus = (id, accountStatus) => api.patch(`/officers/${id}/status`, { accountStatus })

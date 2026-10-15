@@ -50,6 +50,11 @@ button, input, select, textarea { font: inherit; }
 .assigned-cases-list { display: grid; gap: 1rem; }
 .assigned-case-item { background: #f8fbff; border: 1px solid #e0eaf7; border-radius: .9rem; padding: 1rem; }
 .case-title { color: #172f53; font-weight: 700; margin: 0; }
+.report-tabs { display: flex; flex-wrap: wrap; gap: .6rem; }
+.report-control-panel, .report-table-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; padding: 1.25rem; }
+.report-table-card { overflow: hidden; padding: 0; }
+.report-table-card th { color: #536276; font-size: .75rem; text-transform: uppercase; white-space: nowrap; }
+.report-table-card td { vertical-align: middle; }
 .assignment-selector-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; padding: 1rem; }
 .assignment-option { background: #f8fbff; border: 1px solid #dfeaf9; border-radius: .85rem; color: #172033; padding: .9rem 1rem; text-align: left; width: 100%; }
 .assignment-option.selected { border-color: #174f95; background: #ebf3ff; }
@@ -59,7 +64,7 @@ button, input, select, textarea { font: inherit; }
 @media (max-width: 767.98px) {
   .welcome-card { align-items: flex-start; flex-direction: column; }
   .dashboard-header .container, .welcome-card, .officer-control-panel .row, .criminal-control-panel .row, .fir-control-panel .row { gap: .75rem; }
-  .officer-table-card, .criminal-table-card, .fir-table-card { overflow-x: auto; }
+  .officer-table-card, .criminal-table-card, .fir-table-card, .report-table-card { overflow-x: auto; }
   .action-stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .action-stack .btn { width: 100%; }
 }
