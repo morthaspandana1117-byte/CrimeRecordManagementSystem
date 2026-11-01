@@ -71,6 +71,13 @@ const evidenceSchema = new mongoose.Schema(
             trim: true,
         },
 
+        fileHash: { type: String, match: /^[a-f0-9]{64}$/i },
+        fileName: { type: String, trim: true },
+        storedFilename: { type: String, select: false },
+        mimeType: { type: String, trim: true },
+        fileSize: { type: Number, min: 0 },
+        uploadedAt: { type: Date },
+
         status: {
             type: String,
             required: true,
@@ -128,14 +135,17 @@ evidenceSchema.pre("save", async function preSaveEvidence() {
         return;
     }
 
-    const existing = await EvidenceCustodyHistory.findOne({
+    const session = this.$session();
+    const existingQuery = EvidenceCustodyHistory.findOne({
         evidenceId: this._id,
         action: "COLLECTED",
         toCustodian: this.currentCustodian,
-    }).lean();
+    });
+    if (session) existingQuery.session(session);
+    const existing = await existingQuery.lean();
 
     if (!existing) {
-        await EvidenceCustodyHistory.create({
+        const custodyEntry = {
             evidenceId: this._id,
             caseId: this.caseId,
             action: "COLLECTED",
@@ -145,7 +155,9 @@ evidenceSchema.pre("save", async function preSaveEvidence() {
             performedByOfficer: this.currentCustodian,
             remarks: "Evidence collected and recorded",
             timestamp: new Date(),
-        });
+        };
+        if (session) await EvidenceCustodyHistory.create([custodyEntry], { session });
+        else await EvidenceCustodyHistory.create(custodyEntry);
     }
 });
 

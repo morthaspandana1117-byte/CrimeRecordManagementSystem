@@ -3,6 +3,9 @@ const EvidenceCustodyHistory = require("../models/EvidenceCustodyHistory");
 const Case = require("../models/Case");
 const Officer = require("../models/Officer");
 const CaseHistory = require("../models/CaseHistory");
+const evidenceFileService = require("../services/evidenceFileService");
+const auditService = require("../services/auditService");
+const mongoose = require("mongoose");
 const {
     isValidObjectId,
     isNonEmptyString,
@@ -57,6 +60,12 @@ const serverControlledEvidenceFields = [
     "verifiedBy",
     "verifiedAt",
     "verificationNotes",
+    "fileHash",
+    "fileName",
+    "storedFilename",
+    "mimeType",
+    "fileSize",
+    "uploadedAt",
 ];
 
 const required = [
@@ -471,6 +480,266 @@ const createEvidence = async (req, res) => {
         }
         return handleError(res, error, "Create evidence error");
     }
+};
+
+const isTransactionCapableTopology = async () => {
+    try {
+        const hello = await mongoose.connection.db.admin().command({ hello: 1 });
+        return Boolean(hello.setName || hello.msg === "isdbgrid");
+    } catch (error) {
+        throw Object.assign(new Error("Unable to determine MongoDB transaction support"), {
+            code: "MONGO_TOPOLOGY_UNAVAILABLE",
+            cause: error,
+        });
+    }
+};
+
+const evidenceUploadCaseError = (code) => Object.assign(new Error(code), { code });
+
+const createEvidenceWithFile = async (req, res) => {
+    const body = req.body || {};
+    if (body.collectedBy && req.authority?.officer?._id && String(body.collectedBy) !== String(req.authority.officer._id)) {
+        return res.status(403).json({ success: false, message: "Evidence collector must match the authenticated officer identity", error: "COLLECTED_BY_IMPERSONATION" });
+    }
+    const forbiddenResponse = rejectServerControlledFields(res, body, "createEvidenceWithFile");
+    if (forbiddenResponse) return forbiddenResponse;
+    const payload = Object.fromEntries(Object.entries(body).filter(([key]) => fields.includes(key)));
+    payload.collectedBy = req.authority?.officer?._id || payload.collectedBy;
+
+    const validation = await validateEvidence(res, payload);
+    if (validation !== "OK") return validation ? invalid(res, validation) : undefined;
+    let caseRecord = await Case.findById(payload.caseId);
+    if (!caseRecord) return notFound(res, "Case");
+    if (!canAccessCase(req, caseRecord)) {
+        return res.status(403).json({ success: false, message: "You may only add evidence to assigned cases", error: "CASE_ACCESS_DENIED" });
+    }
+    if (caseRecord.status === "Closed") {
+        return res.status(409).json({ success: false, message: "Reopen the Case before adding new Evidence", error: "CASE_CLOSED" });
+    }
+    if (!req.evidenceUpload?.buffer) {
+        return res.status(400).json({ success: false, message: "An evidence file is required", error: "EVIDENCE_FILE_REQUIRED" });
+    }
+
+    let initializeCaseRound = false;
+    let originalCaseRound;
+    let originalInvestigationHistory;
+
+    const evidenceRecordId = new mongoose.Types.ObjectId();
+    const caseHistoryRecordId = new mongoose.Types.ObjectId();
+    const uploadAuditId = new mongoose.Types.ObjectId();
+    let storedFilename;
+    let session;
+    let transactionUsed = false;
+    let topologyDetectionCompleted = false;
+    let transactionCallbackStarted = false;
+    let transactionCallbackCompleted = false;
+    let transactionCommitted = false;
+    let persistenceCommitted = false;
+    let persistenceOutcomeUnknown = false;
+    let transactionConfirmedAborted = false;
+    let savedFile;
+    let responseRecord;
+
+    const persist = async (activeSession) => {
+        const caseQuery = Case.findById(payload.caseId);
+        if (activeSession) caseQuery.session(activeSession);
+        caseRecord = await caseQuery;
+        if (!caseRecord) throw evidenceUploadCaseError("UPLOAD_CASE_NOT_FOUND");
+        if (!canAccessCase(req, caseRecord)) throw evidenceUploadCaseError("UPLOAD_CASE_ACCESS_DENIED");
+        if (caseRecord.status === "Closed") throw evidenceUploadCaseError("UPLOAD_CASE_CLOSED");
+
+        initializeCaseRound = !caseRecord.currentInvestigationRound;
+        originalCaseRound = caseRecord.currentInvestigationRound;
+        originalInvestigationHistory = caseRecord.investigationHistory.map((entry) => entry.toObject ? entry.toObject() : { ...entry });
+        if (initializeCaseRound) {
+            caseRecord.currentInvestigationRound = 1;
+            caseRecord.investigationHistory.push({
+                round: 1,
+                startedAt: caseRecord.startDate || new Date(),
+                startedBy: req.user?.userId,
+                status: caseRecord.status === "Reopened" ? "Reopened" : caseRecord.status,
+            });
+        }
+        Object.assign(payload, {
+            investigationRound: caseRecord.currentInvestigationRound,
+            createdBy: req.user?.userId,
+            verificationStatus: "unverified",
+            currentCustodian: payload.collectedBy,
+        });
+
+        if (initializeCaseRound) await caseRecord.save(activeSession ? { session: activeSession } : undefined);
+        const evidenceOptions = activeSession ? { session: activeSession } : undefined;
+        const [record] = await Evidence.create([{
+            ...payload,
+            _id: evidenceRecordId,
+            fileHash: savedFile.fileHash,
+            fileName: req.evidenceUpload.fileName,
+            storedFilename: savedFile.storedFilename,
+            mimeType: req.evidenceUpload.mimeType,
+            fileSize: savedFile.fileSize,
+            uploadedAt: new Date(),
+        }], evidenceOptions);
+        const caseHistoryRecord = {
+            _id: caseHistoryRecordId,
+            caseId: record.caseId,
+            actionType: "evidence_added",
+            description: `Evidence added: ${record.evidenceId}`,
+            performedBy: req.user?.userId,
+            performedByRole: req.authority?.systemRole || req.user?.role,
+            performedByRank: req.authority?.rank,
+            previousValue: null,
+            newValue: { evidenceId: record.evidenceId, investigationRound: record.investigationRound, status: record.status },
+            metadata: { evidenceId: record.evidenceId, caseId: record.caseId.toString() },
+            timestamp: new Date(),
+        };
+        if (activeSession) await CaseHistory.create([caseHistoryRecord], { session: activeSession });
+        else await CaseHistory.create(caseHistoryRecord);
+
+        const evidenceQuery = Evidence.findById(record._id).select("-__v");
+        if (activeSession) evidenceQuery.session(activeSession);
+        const populated = await populate(evidenceQuery);
+        await auditService.log({
+            actor: req.authority?.user?._id || req.user?.userId,
+            action: "EVIDENCE_FILE_UPLOADED",
+            entityType: "Evidence",
+            entityId: record._id,
+            after: populated,
+            method: req.method,
+            path: `${req.baseUrl}${req.path}`,
+            session: activeSession,
+            auditId: uploadAuditId,
+        });
+        return populated;
+    };
+
+    try {
+        // Unknown topology is a request failure; never silently downgrade to standalone writes.
+        transactionUsed = await isTransactionCapableTopology();
+        topologyDetectionCompleted = true;
+        savedFile = await evidenceFileService.saveBuffer(req.evidenceUpload.buffer);
+        storedFilename = savedFile.storedFilename;
+        if (transactionUsed) {
+            session = await mongoose.startSession();
+            await session.withTransaction(async () => {
+                transactionCallbackStarted = true;
+                responseRecord = await persist(session);
+                transactionCallbackCompleted = true;
+            });
+            transactionCommitted = true;
+            persistenceCommitted = true;
+        } else {
+            // Standalone MongoDB has no multi-document transactions; this path uses compensating rollback and is not atomic.
+            responseRecord = await persist(null);
+            persistenceCommitted = true;
+        }
+    } catch (error) {
+        if (!storedFilename && error?.storedFilename) storedFilename = error.storedFilename;
+        const rollbackFailures = [];
+        if (transactionUsed && transactionCallbackStarted) {
+            if (transactionCallbackCompleted) {
+                // Do not attempt an abort after the callback completed: commit may have reached MongoDB.
+                persistenceOutcomeUnknown = true;
+            } else if (session?.inTransaction()) {
+                try {
+                    await session.abortTransaction();
+                    transactionConfirmedAborted = true;
+                } catch {
+                    persistenceOutcomeUnknown = true;
+                    rollbackFailures.push("transaction-abort");
+                }
+            } else if (!error?.hasErrorLabel?.("UnknownTransactionCommitResult")) {
+                // The callback failed before commit and the driver ended the transaction.
+                transactionConfirmedAborted = true;
+            } else {
+                // A completed callback followed by a transaction error may have committed.
+                persistenceOutcomeUnknown = true;
+            }
+        }
+        if (!transactionUsed && topologyDetectionCompleted) {
+            for (const rollback of [
+                ["evidence-record", () => Evidence.deleteOne({ _id: evidenceRecordId })],
+                ["custody-history", () => EvidenceCustodyHistory.deleteMany({ evidenceId: evidenceRecordId, action: "COLLECTED" })],
+                ["case-history", () => CaseHistory.deleteOne({ _id: caseHistoryRecordId })],
+            ]) {
+                try {
+                    await rollback[1]();
+                } catch {
+                    rollbackFailures.push(rollback[0]);
+                }
+            }
+            if (initializeCaseRound) {
+                try {
+                    caseRecord.currentInvestigationRound = originalCaseRound;
+                    caseRecord.investigationHistory = originalInvestigationHistory;
+                    await caseRecord.save();
+                } catch {
+                    rollbackFailures.push("case-investigation-round");
+                }
+            }
+        }
+
+        if (transactionUsed && transactionCallbackStarted && !transactionConfirmedAborted) {
+            persistenceOutcomeUnknown = true;
+        }
+
+        if (storedFilename && !persistenceCommitted && !persistenceOutcomeUnknown) {
+            let removed = false;
+            for (let attempt = 0; attempt < 3 && !removed; attempt++) {
+                try {
+                    await evidenceFileService.deleteStoredFile(storedFilename);
+                    removed = true;
+                } catch (cleanupError) {
+                    if (attempt === 2) rollbackFailures.push("uploaded-file-cleanup");
+                    else await new Promise((resolve) => setTimeout(resolve, 10 * (attempt + 1)));
+                }
+            }
+        }
+        const isCaseNotFound = error.code === "UPLOAD_CASE_NOT_FOUND";
+        const isCaseAccessDenied = error.code === "UPLOAD_CASE_ACCESS_DENIED";
+        const isCaseClosed = error.code === "UPLOAD_CASE_CLOSED";
+        console.error("Evidence upload persistence failed", {
+            evidenceRecordId: evidenceRecordId.toString(),
+            errorName: error?.name,
+            errorCode: error?.code,
+            transactionCommitted,
+            persistenceCommitted,
+            persistenceOutcomeUnknown,
+            rollbackFailures,
+        });
+        if (isCaseNotFound) {
+            return notFound(res, "Case");
+        }
+        if (isCaseAccessDenied) {
+            return res.status(403).json({ success: false, message: "You may only add evidence to assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+        if (isCaseClosed) {
+            return res.status(409).json({ success: false, message: "Reopen the Case before adding new Evidence", error: "CASE_CLOSED" });
+        }
+        if (error.code === "MONGO_TOPOLOGY_UNAVAILABLE") {
+            return res.status(503).json({ success: false, message: "Unable to determine database transaction support", error: "DATABASE_TOPOLOGY_UNAVAILABLE" });
+        }
+        if (error.code === 11000 && error.keyPattern?.evidenceId) {
+            return conflict(res, "Evidence ID already exists", "EVIDENCE_ID_ALREADY_EXISTS");
+        }
+        if (transactionCommitted && responseRecord) {
+            return res.status(201).json({ success: true, message: "Evidence created successfully", data: responseRecord });
+        }
+        return res.status(500).json({ success: false, message: "Unable to persist uploaded evidence", error: "EVIDENCE_UPLOAD_PERSISTENCE_FAILED" });
+    } finally {
+        if (session) {
+            try {
+                await session.endSession();
+            } catch (error) {
+                console.error("Evidence upload session cleanup failed", {
+                    evidenceRecordId: evidenceRecordId.toString(),
+                    errorName: error?.name,
+                    errorCode: error?.code,
+                    transactionCommitted,
+                });
+            }
+        }
+    }
+    return res.status(201).json({ success: true, message: "Evidence created successfully", data: responseRecord });
 };
 
 const getAllEvidence = async (req, res) => {
@@ -985,6 +1254,7 @@ const verifyEvidence = async (req, res) => {
 
 module.exports = {
     createEvidence,
+    createEvidenceWithFile,
     getAllEvidence,
     getEvidenceById,
     updateEvidence,

@@ -283,12 +283,13 @@ const strikeAllowedFields = (body) =>
 
 const createFIR = async (req, res) => {
     try {
+        const systemRole = req.authority?.systemRole || req.user?.systemRole || (req.user?.role === "admin" ? "system_admin" : req.user?.role);
         const payload = strikeAllowedFields(req.body);
-        const officerForUser = req.user?.role === "officer"
+        const officerForUser = systemRole === "officer"
             ? await resolveOfficerForUser(req.user.userId)
             : null;
 
-        if (req.user.role === "officer") {
+        if (systemRole === "officer") {
             if (!officerForUser) {
                 return res.status(403).json({
                     success: false,
@@ -300,7 +301,7 @@ const createFIR = async (req, res) => {
             const officerEligibility = await ensureEligibleOfficer(req, res, officerForUser._id);
             if (!officerEligibility.valid) return officerEligibility.response;
             payload.registeredBy = officerForUser._id;
-        } else if (req.user.role === "admin") {
+        } else if (systemRole === "system_admin") {
             if (payload.registeredBy && payload.registeredBy !== "") {
                 const adminOfficerCheck = await ensureEligibleOfficer(req, res, payload.registeredBy);
                 if (!adminOfficerCheck.valid) return adminOfficerCheck.response;
@@ -426,7 +427,8 @@ const updateFIR = async (req, res) => {
             return res.status(403).json({ success: false, message: "You may only update relevant FIRs", error: "FIR_ACCESS_DENIED" });
         }
 
-        if (req.user.role === "officer") {
+        const systemRole = req.authority?.systemRole || req.user?.systemRole || (req.user?.role === "admin" ? "system_admin" : req.user?.role);
+        if (systemRole === "officer") {
             const officer = await resolveOfficerForUser(req.user.userId);
             if (!officer) {
                 return res.status(403).json({
@@ -435,14 +437,15 @@ const updateFIR = async (req, res) => {
                     error: "OFFICER_INELIGIBLE",
                 });
             }
-            if (updates.registeredBy && String(updates.registeredBy) !== String(officer._id)) {
+            // Editing never transfers ownership: the registering officer is kept.
+            if (updates.registeredBy && String(updates.registeredBy) !== String(existingFIR.registeredBy)) {
                 return res.status(403).json({
                     success: false,
-                    message: "You can only update FIRs assigned to your officer profile",
+                    message: "FIR ownership cannot be changed through an update",
                     error: "FORBIDDEN",
                 });
             }
-            updates.registeredBy = officer._id;
+            delete updates.registeredBy;
         }
 
         const result = await validateFIR(res, updates, true, req);

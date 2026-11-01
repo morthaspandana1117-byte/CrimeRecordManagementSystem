@@ -3,12 +3,14 @@ const { authMiddleware } = require("../middleware/authMiddleware");
 const { OFFICER_RANKS, resolveAuthority, requireAuthority } = require("../middleware/authority");
 const controller = require("../controllers/evidenceController");
 const auditCapture = require("../middleware/auditCapture");
+const evidenceUpload = require("../middleware/evidenceUpload");
 
 const router = express.Router();
 
 router.use(authMiddleware);
 router.use(resolveAuthority);
 router.use(requireAuthority({ ranks: OFFICER_RANKS }));
+router.post("/with-file", evidenceUpload, controller.createEvidenceWithFile);
 router.use(auditCapture);
 
 router.route("/").post(controller.createEvidence).get(controller.getAllEvidence);
