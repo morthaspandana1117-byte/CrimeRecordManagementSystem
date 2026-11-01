@@ -11,6 +11,9 @@ const RESOURCE_MODELS = {
 
 const actionFor = (method, path, entityType, body) => {
     const verb = method.toUpperCase();
+    if (entityType === "Evidence" && verb === "POST" && /\/with-file\/?$/.test(path)) {
+        return "EVIDENCE_FILE_UPLOADED";
+    }
     if (entityType === "Evidence" && verb === "POST" && /\/custody\/transfer\/?$/.test(path)) {
         return "EVIDENCE_CUSTODY_TRANSFERRED";
     }
@@ -45,7 +48,7 @@ const auditCapture = async (req, res, next) => {
     const [entityType, modelPath] = resource;
     const Model = require(modelPath);
     const firstRoutePart = req.path.split("/").filter(Boolean)[0];
-    const entityId = firstRoutePart && firstRoutePart !== "status" && firstRoutePart !== "reopen" && firstRoutePart !== "assign-officers"
+    const entityId = firstRoutePart && !["status", "reopen", "assign-officers", "with-file"].includes(firstRoutePart)
         ? firstRoutePart
         : undefined;
     let before;

@@ -3,3 +3,6 @@ node_modules/
 
 client.zip
 server.zip
+
+# Uploaded evidence is private runtime data and must never be committed.
+private-evidence/

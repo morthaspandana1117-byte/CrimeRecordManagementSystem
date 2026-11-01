@@ -4,7 +4,7 @@ const SAFE_FIELDS = {
     FIR: ["firNo", "status", "crimeType", "policeStation", "registeredBy"],
     Case: ["caseNo", "status", "priority", "assignedOfficerIds", "criminalIds", "title"],
     Criminal: ["criminalId", "status", "fullName"],
-    Evidence: ["evidenceId", "status", "verificationStatus", "currentCustodian", "caseId", "collectedBy", "type"],
+    Evidence: ["evidenceId", "status", "verificationStatus", "currentCustodian", "caseId", "collectedBy", "type", "fileName", "fileHash", "fileSize", "mimeType", "uploadedAt"],
     Report: ["title", "status", "caseId", "preparedBy"],
     Officer: ["officerId", "rank", "status", "name"],
 };
@@ -29,11 +29,12 @@ const safeSnapshot = (entityType, value) => {
     return Object.keys(snapshot).length ? snapshot : undefined;
 };
 
-const log = async ({ actor, action, entityType, entityId, before, after, method, path }) => {
+const log = async ({ actor, action, entityType, entityId, before, after, method, path, session, auditId }) => {
     if (!action || !entityType) throw new Error("Audit action and entity type are required");
     const beforeSnapshot = safeSnapshot(entityType, before);
     const afterSnapshot = safeSnapshot(entityType, after);
-    return AuditLog.create({
+    const entry = {
+        ...(auditId ? { _id: auditId } : {}),
         actor,
         action,
         entityType,
@@ -44,7 +45,31 @@ const log = async ({ actor, action, entityType, entityId, before, after, method,
             ...(afterSnapshot ? { after: afterSnapshot } : {}),
         },
         metadata: { method, path },
-    });
+    };
+    if (session) {
+        const [record] = await AuditLog.create([entry], { session });
+        return record;
+    }
+    try {
+        return await AuditLog.create(entry);
+    } catch (error) {
+        if (auditId) {
+            try {
+                const existing = await AuditLog.findById(auditId)
+                    .select("entityId entityType action")
+                    .lean();
+                if (
+                    existing &&
+                    String(existing.entityId) === String(entityId) &&
+                    existing.entityType === entityType &&
+                    existing.action === action
+                ) return existing;
+            } catch {
+                // Preserve the creation error if verification itself is unavailable.
+            }
+        }
+        throw error;
+    }
 };
 
 module.exports = { log, safeSnapshot };

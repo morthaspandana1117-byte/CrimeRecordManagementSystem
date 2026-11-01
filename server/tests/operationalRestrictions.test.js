@@ -4,8 +4,14 @@ const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const request = require('supertest');
 const { MongoMemoryServer } = require('mongodb-memory-server');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+const { mock } = require('node:test');
 
 process.env.JWT_SECRET = 'operational-restrictions-test-secret';
+const evidenceStorageDirectory = path.join(os.tmpdir(), `crms-evidence-operational-${process.pid}`);
+process.env.EVIDENCE_STORAGE_DIR = evidenceStorageDirectory;
 
 const createApp = require('../app');
 const User = require('../models/User');
@@ -16,6 +22,8 @@ const Case = require('../models/Case');
 const Evidence = require('../models/Evidence');
 const EvidenceCustodyHistory = require('../models/EvidenceCustodyHistory');
 const CaseHistory = require('../models/CaseHistory');
+const AuditLog = require('../models/AuditLog');
+const evidenceFileService = require('../services/evidenceFileService');
 
 let mongoServer;
 let app;
@@ -143,6 +151,7 @@ test.after(async () => {
   await mongoose.connection.dropDatabase();
   await mongoose.disconnect();
   await mongoServer.stop();
+  await fs.rm(evidenceStorageDirectory, { recursive: true, force: true });
 });
 
 test('criminal, FIR, and evidence delete endpoints are unavailable and do not remove records', async () => {
@@ -532,4 +541,287 @@ test('case history is persistent and chronological for relevant events', async (
     .set('Authorization', `Bearer ${tokens.investigating_officer}`)
     .send({ description: 'tamper' });
   assert.ok(attemptedEdit.status === 404 || attemptedEdit.status === 405 || attemptedEdit.status === 403);
+});
+
+const uploadPdf = (token, evidenceId = 'E-UPLOAD-PDF', fileName = 'evidence.pdf') =>
+  request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${token}`)
+    .field('evidenceId', evidenceId)
+    .field('caseId', assignedCase._id.toString())
+    .field('type', 'Document')
+    .field('description', 'Uploaded signed evidence document')
+    .field('collectedBy', officers.investigating_officer._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .attach('file', Buffer.from('%PDF-1.7\nCRMS evidence bytes\n', 'ascii'), { filename: fileName, contentType: 'application/pdf' });
+
+const uploadArtifactCounts = async () => ({
+  evidence: await Evidence.countDocuments({}),
+  custody: await EvidenceCustodyHistory.countDocuments({}),
+  caseHistory: await CaseHistory.countDocuments({ actionType: 'evidence_added' }),
+});
+
+test('multipart evidence creation stores validated bytes and normalizes misleading display extensions', async () => {
+  const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-PDF', '../../unsafe.exe');
+  assert.equal(response.status, 201);
+  assert.match(response.body.data.fileHash, /^[a-f0-9]{64}$/);
+  assert.equal(response.body.data.mimeType, 'application/pdf');
+  assert.equal(response.body.data.fileSize, Buffer.byteLength('%PDF-1.7\nCRMS evidence bytes\n'));
+  assert.equal(response.body.data.fileName.includes('..'), false);
+  assert.equal(response.body.data.fileName.endsWith('.pdf'), true);
+  assert.equal(/[\\/]/.test(response.body.data.fileName), false);
+  assert.equal(Object.hasOwn(response.body.data, 'storedFilename'), false);
+  assert.equal(JSON.stringify(response.body).includes(evidenceStorageDirectory), false);
+  const audit = await AuditLog.findOne({ entityType: 'Evidence', entityId: response.body.data._id, action: 'EVIDENCE_FILE_UPLOADED' }).lean();
+  assert.ok(audit);
+  assert.equal(await AuditLog.countDocuments({ entityType: 'Evidence', entityId: response.body.data._id, action: 'EVIDENCE_FILE_UPLOADED' }), 1);
+  assert.equal(audit.changes.after.fileHash, response.body.data.fileHash);
+  assert.equal(audit.changes.after.fileSize, response.body.data.fileSize);
+  assert.equal(Object.hasOwn(audit.changes.after, 'storedFilename'), false);
+  assert.equal(JSON.stringify(audit).includes(evidenceStorageDirectory), false);
+
+  const savedRecord = await Evidence.findOne({ evidenceId: 'E-UPLOAD-PDF' }).select('+storedFilename').lean();
+  assert.ok(savedRecord.storedFilename);
+  assert.equal(await fs.readFile(path.join(evidenceStorageDirectory, savedRecord.storedFilename), 'utf8'), '%PDF-1.7\nCRMS evidence bytes\n');
+});
+
+test('multipart evidence creation rejects absent, unsupported, and spoofed files', async () => {
+  const missing = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-MISSING');
+  assert.equal(missing.status, 400);
+  assert.equal(missing.body.error, 'EVIDENCE_FILE_REQUIRED');
+
+  const unsupported = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .attach('file', Buffer.from('plain text'), { filename: 'evidence.txt', contentType: 'text/plain' });
+  assert.equal(unsupported.status, 415);
+
+  const spoofed = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .attach('file', Buffer.from('%PDF-1.7\nnot a jpeg'), { filename: 'evidence.jpg', contentType: 'image/jpeg' });
+  assert.equal(spoofed.status, 415);
+
+  const invalidSignature = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .attach('file', Buffer.from('not actually a pdf'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(invalidSignature.status, 415);
+});
+
+test('multipart evidence creation accepts a signature-validated PNG and enforces the default size limit', async () => {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/d2sAAAAASUVORK5CYII=', 'base64');
+  const image = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-PNG')
+    .field('caseId', assignedCase._id.toString())
+    .field('type', 'Photograph')
+    .field('description', 'Uploaded scene photograph')
+    .field('collectedBy', officers.investigating_officer._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .attach('file', png, { filename: 'scene.png', contentType: 'image/png' });
+  assert.equal(image.status, 201);
+  assert.equal(image.body.data.mimeType, 'image/png');
+  assert.equal(image.body.data.fileHash.length, 64);
+
+  const oversized = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .attach('file', Buffer.alloc(10 * 1024 * 1024 + 1, 0x41), { filename: 'large.pdf', contentType: 'application/pdf' });
+  assert.equal(oversized.status, 413);
+  assert.equal(oversized.body.error, 'EVIDENCE_FILE_TOO_LARGE');
+});
+
+test('multipart upload preserves authorization and case business rules', async () => {
+  const unauthenticated = await request(app)
+    .post('/api/evidence/with-file')
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(unauthenticated.status, 401);
+
+  const insufficientRole = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.system_admin}`)
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(insufficientRole.status, 403);
+
+  const metadataSpoof = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-SPOOF-HASH')
+    .field('caseId', assignedCase._id.toString())
+    .field('type', 'Document')
+    .field('description', 'Metadata spoof attempt')
+    .field('collectedBy', officers.investigating_officer._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .field('fileHash', '0'.repeat(64))
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(metadataSpoof.status, 400);
+  assert.equal(metadataSpoof.body.error, 'FORBIDDEN_EVIDENCE_FIELD');
+  assert.equal(await Evidence.exists({ evidenceId: 'E-UPLOAD-SPOOF-HASH' }), null);
+
+  const impersonation = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-SPOOF-COLLECTOR')
+    .field('caseId', assignedCase._id.toString())
+    .field('type', 'Document')
+    .field('description', 'Impersonation attempt')
+    .field('collectedBy', officers.inspector._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(impersonation.status, 403);
+  assert.equal(impersonation.body.error, 'COLLECTED_BY_IMPERSONATION');
+
+  const closedCase = await createCaseFixture('CASE-UPLOAD-CLOSED', [officers.investigating_officer._id]);
+  closedCase.status = 'Closed';
+  await closedCase.save();
+  const closed = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-CLOSED')
+    .field('caseId', closedCase._id.toString())
+    .field('type', 'Document')
+    .field('description', 'Closed case upload')
+    .field('collectedBy', officers.investigating_officer._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(closed.status, 409);
+  assert.equal(await Evidence.exists({ evidenceId: 'E-UPLOAD-CLOSED' }), null);
+
+  const unassignedCase = await createCaseFixture('CASE-UPLOAD-UNASSIGNED', [officers.inspector._id]);
+  const unassigned = await request(app)
+    .post('/api/evidence/with-file')
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .field('evidenceId', 'E-UPLOAD-UNASSIGNED')
+    .field('caseId', unassignedCase._id.toString())
+    .field('type', 'Document')
+    .field('description', 'Unassigned case upload')
+    .field('collectedBy', officers.investigating_officer._id.toString())
+    .field('collectionDate', '2026-10-12')
+    .field('location', 'Market Road')
+    .field('status', 'Collected')
+    .attach('file', Buffer.from('%PDF-1.7'), { filename: 'evidence.pdf', contentType: 'application/pdf' });
+  assert.equal(unassigned.status, 403);
+  assert.equal(unassigned.body.error, 'CASE_ACCESS_DENIED');
+  assert.equal(await Evidence.exists({ evidenceId: 'E-UPLOAD-UNASSIGNED' }), null);
+});
+
+test('custody pre-save failure removes the file and creates no records', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const baseline = await uploadArtifactCounts();
+  const originalCreate = EvidenceCustodyHistory.create;
+  mock.method(EvidenceCustodyHistory, 'create', async () => { throw new Error('simulated custody failure'); });
+  try {
+    const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-CUSTODY-FAIL');
+    assert.equal(response.status, 500);
+    assert.deepEqual(await uploadArtifactCounts(), baseline);
+    assert.deepEqual(await fs.readdir(evidenceStorageDirectory), existingFiles);
+  } finally {
+    EvidenceCustodyHistory.create = originalCreate;
+  }
+});
+
+test('evidence persistence failure after custody pre-save rolls back the custody record and file', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const baseline = await uploadArtifactCounts();
+  await Evidence.collection.insertOne({
+    evidenceId: 'E-UPLOAD-DB-FAIL',
+    caseId: assignedCase._id,
+    type: 'Document',
+    description: 'Existing evidence for duplicate-key persistence failure',
+    collectedBy: officers.investigating_officer._id,
+    collectionDate: new Date('2026-10-12'),
+    location: 'Market Road',
+    status: 'Collected',
+    currentCustodian: officers.investigating_officer._id,
+    verificationStatus: 'unverified',
+  });
+  const withSeed = await uploadArtifactCounts();
+  const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-DB-FAIL');
+  assert.equal(response.status, 409);
+  assert.equal(await EvidenceCustodyHistory.countDocuments({}), withSeed.custody);
+  assert.equal(await CaseHistory.countDocuments({ actionType: 'evidence_added' }), withSeed.caseHistory);
+  assert.equal((await fs.readdir(evidenceStorageDirectory)).length, existingFiles.length);
+  assert.equal(withSeed.evidence, baseline.evidence + 1);
+});
+
+test('case-history persistence failure compensates evidence, custody, and file writes', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const baseline = await uploadArtifactCounts();
+  const originalCreate = CaseHistory.create;
+  mock.method(CaseHistory, 'create', async () => { throw new Error('simulated case history failure'); });
+  try {
+    const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-HISTORY-FAIL');
+    assert.equal(response.status, 500);
+    assert.deepEqual(await uploadArtifactCounts(), baseline);
+    assert.deepEqual(await fs.readdir(evidenceStorageDirectory), existingFiles);
+  } finally {
+    CaseHistory.create = originalCreate;
+  }
+});
+
+test('final evidence population failure compensates all standalone writes', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const baseline = await uploadArtifactCounts();
+  const originalFindById = Evidence.findById;
+  mock.method(Evidence, 'findById', () => { throw new Error('simulated population failure'); });
+  try {
+    const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-POPULATE-FAIL');
+    assert.equal(response.status, 500);
+    assert.deepEqual(await uploadArtifactCounts(), baseline);
+    assert.deepEqual(await fs.readdir(evidenceStorageDirectory), existingFiles);
+  } finally {
+    Evidence.findById = originalFindById;
+  }
+});
+
+test('failed first cleanup is retried and the stored file is removed', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const originalCreate = Evidence.create;
+  const originalDelete = evidenceFileService.deleteStoredFile;
+  let cleanupCalls = 0;
+  mock.method(Evidence, 'create', async () => { throw new Error('simulated database failure'); });
+  mock.method(evidenceFileService, 'deleteStoredFile', async (filename) => {
+    cleanupCalls++;
+    if (cleanupCalls === 1) throw new Error('simulated transient cleanup failure');
+    return originalDelete(filename);
+  });
+  try {
+    const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-CLEANUP-RETRY');
+    assert.equal(response.status, 500);
+    assert.equal(cleanupCalls, 2);
+    assert.deepEqual(await fs.readdir(evidenceStorageDirectory), existingFiles);
+  } finally {
+    Evidence.create = originalCreate;
+    evidenceFileService.deleteStoredFile = originalDelete;
+  }
+});
+
+test('audit failure fails the upload and compensates persisted evidence', async () => {
+  const existingFiles = await fs.readdir(evidenceStorageDirectory);
+  const baseline = await uploadArtifactCounts();
+  const originalCreate = AuditLog.create;
+  mock.method(AuditLog, 'create', async () => { throw new Error('simulated audit failure'); });
+  try {
+    const response = await uploadPdf(tokens.investigating_officer, 'E-UPLOAD-AUDIT-FAIL');
+    assert.equal(response.status, 500);
+    assert.deepEqual(await uploadArtifactCounts(), baseline);
+    assert.deepEqual(await fs.readdir(evidenceStorageDirectory), existingFiles);
+  } finally {
+    AuditLog.create = originalCreate;
+  }
 });
