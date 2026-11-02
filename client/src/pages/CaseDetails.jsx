@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer } from '../authority'
 import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
-import { hasPrivateEvidenceFile, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
+import { applyEvidenceVerificationResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -12,6 +12,7 @@ const canManageCaseLifecycle = (user) => seniorOfficerRanks.includes(getRank(use
 
 function CaseDetails() {
   const { id } = useParams()
+  const location = useLocation()
   const navigate = useNavigate()
   const { user } = useAuth()
   const [record, setRecord] = useState(null)
@@ -31,16 +32,16 @@ function CaseDetails() {
   const [rejectingEvidenceId, setRejectingEvidenceId] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
 
-  const load = useCallback(async () => {
+  const load = useCallback(async ({ showLoading = true } = {}) => {
     try {
-      setLoading(true)
+      if (showLoading) setLoading(true)
       setError('')
       setEvidenceError('')
       const caseResponse = await getCaseById(id)
       setRecord(caseResponse.data?.data || null)
       try {
         const evidenceResponse = await getEvidence({ caseId: id })
-        setEvidence(Array.isArray(evidenceResponse.data?.data) ? evidenceResponse.data.data : [])
+        setEvidence(evidenceItemsFromResponse(evidenceResponse))
       } catch (requestError) {
         setEvidence([])
         setEvidenceError(message(requestError, 'Related evidence could not be loaded.'))
@@ -55,7 +56,7 @@ function CaseDetails() {
     } catch (requestError) {
       setError(message(requestError, 'Could not load case details.'))
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }, [id])
 
@@ -137,8 +138,9 @@ function CaseDetails() {
     }
     try {
       const note = 'Verified by senior officer'
-      await verifyEvidence(item._id, { verificationStatus: nextStatus, verificationNotes: note })
-      await load()
+      const response = await verifyEvidence(item._id, { verificationStatus: nextStatus, verificationNotes: note })
+      setEvidence((current) => current.map((record) => record._id === item._id ? applyEvidenceVerificationResponse(record, response) : record))
+      await load({ showLoading: false })
     } catch (requestError) {
       setEvidenceError(message(requestError, 'Could not update evidence verification.'))
     }
@@ -161,7 +163,7 @@ function CaseDetails() {
   useEffect(() => {
     const timer = window.setTimeout(load, 0)
     return () => window.clearTimeout(timer)
-  }, [load])
+  }, [load, location.key])
 
   if (loading) {
     return <main className="page-loader" aria-label="Loading case"><div className="spinner-border text-primary" role="status" /><span className="mt-3">Loading case details...</span></main>
@@ -236,7 +238,7 @@ function CaseDetails() {
                       {hasPrivateEvidenceFile(item) && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
                       {isSeniorOfficer(user) && (
                         <>
-                          <button className="btn btn-sm btn-success" disabled={item.verificationStatus === 'verified'} onClick={() => handleVerifyEvidence(item, 'verified')} type="button">Verify</button>
+                          <button className="btn btn-sm btn-success" disabled={item.verificationStatus === 'verified'} onClick={() => handleVerifyEvidence(item, 'verified')} type="button">{evidenceVerificationLabel(item)}</button>
                           <button className="btn btn-sm btn-outline-danger" disabled={item.verificationStatus === 'rejected'} onClick={() => handleVerifyEvidence(item, 'rejected')} type="button">Reject</button>
                         </>
                       )}

@@ -40,3 +40,26 @@ export function safeEvidenceDownloadFilename(value, fallback = 'evidence') {
 export function hasPrivateEvidenceFile(record) {
   return record?.hasFile === true
 }
+
+export function evidenceVerificationLabel(record) {
+  return record?.verificationStatus === 'verified' ? 'Verified' : 'Verify'
+}
+
+export function applyEvidenceVerificationResponse(record, response) {
+  const verifiedRecord = response?.data?.data
+  if (
+    !record ||
+    String(verifiedRecord?._id) !== String(record._id) ||
+    verifiedRecord?.verificationStatus !== 'verified'
+  ) return record
+
+  return { ...record, verificationStatus: 'verified' }
+}
+
+export function evidenceItemsFromResponse(response) {
+  return Array.isArray(response?.data?.data) ? response.data.data : []
+}
+
+export function evidenceListRequestConfig(params = {}) {
+  return { params, headers: { 'Cache-Control': 'no-cache' } }
+}

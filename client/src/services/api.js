@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { evidenceListRequestConfig } from '../utils/evidenceFiles'
 
 const TOKEN_STORAGE_KEY = 'crms_auth_token'
 const DEFAULT_API_BASE_URL = typeof window !== 'undefined'
@@ -69,7 +70,7 @@ export const createCase = (caseRecord) => api.post('/cases', caseRecord)
 export const updateCase = (id, caseRecord) => api.put(`/cases/${id}`, caseRecord)
 export const updateCaseStatus = (id, status, details = {}) => api.patch(`/cases/${id}/status`, { ...details, status })
 export const reopenCase = (id, reopenReason) => api.patch(`/cases/${id}/reopen`, { reopenReason })
-export const getEvidence = (params = {}) => api.get('/evidence', { params })
+export const getEvidence = (params = {}) => api.get('/evidence', evidenceListRequestConfig(params))
 export const createEvidence = (evidence) => api.post('/evidence', evidence)
 export const createEvidenceWithFile = (formData) => api.post('/evidence/with-file', formData, { headers: { 'Content-Type': undefined } })
 export const getEvidenceById = (id) => api.get(`/evidence/${id}`)
