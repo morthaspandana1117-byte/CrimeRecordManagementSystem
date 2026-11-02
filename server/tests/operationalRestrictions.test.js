@@ -410,8 +410,8 @@ test('evidence download is authorized and verification is senior-only', async ()
   const download = await request(app)
     .get(`/api/evidence/${evidence._id}/download`)
     .set('Authorization', `Bearer ${tokens.investigating_officer}`);
-  assert.equal(download.status, 200);
-  assert.equal(download.body.data.downloadUrl, 'https://example.com/evidence/scene.jpg');
+  assert.equal(download.status, 404);
+  assert.equal(download.body.error, 'EVIDENCE_FILE_NOT_FOUND');
 
   const systemAdminDownload = await request(app)
     .get(`/api/evidence/${evidence._id}/download`)

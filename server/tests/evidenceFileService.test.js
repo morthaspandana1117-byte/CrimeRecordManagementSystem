@@ -30,6 +30,55 @@ test("rejects client-controlled storage paths", () => {
     assert.throws(() => service.resolveStoredPath("../../outside"), /Invalid stored evidence identifier/);
 });
 
+test("readStoredFile streams a regular file and rejects missing files", async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "crms-evidence-read-"));
+    process.env.EVIDENCE_STORAGE_DIR = directory;
+    t.after(async () => {
+        delete process.env.EVIDENCE_STORAGE_DIR;
+        await fs.rm(directory, { recursive: true, force: true });
+    });
+
+    const stored = await service.saveBuffer(Buffer.from("private evidence bytes"));
+    const chunks = [];
+    for await (const chunk of service.readStoredFile(stored.storedFilename)) chunks.push(chunk);
+    assert.deepEqual(Buffer.concat(chunks), Buffer.from("private evidence bytes"));
+
+    await fs.rm(service.resolveStoredPath(stored.storedFilename));
+    assert.throws(() => service.readStoredFile(stored.storedFilename), { code: "ENOENT" });
+
+    const directoryEntry = "123e4567-e89b-42d3-a456-426614174001";
+    await fs.mkdir(service.resolveStoredPath(directoryEntry));
+    assert.throws(() => service.readStoredFile(directoryEntry), { code: "EINVALIDTYPE" });
+});
+
+test("readStoredFile rejects symbolic links to files outside private storage", async (t) => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "crms-evidence-symlink-"));
+    const outsideDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "crms-evidence-outside-"));
+    const original = process.env.EVIDENCE_STORAGE_DIR;
+    process.env.EVIDENCE_STORAGE_DIR = directory;
+    t.after(async () => {
+        if (original === undefined) delete process.env.EVIDENCE_STORAGE_DIR;
+        else process.env.EVIDENCE_STORAGE_DIR = original;
+        await fs.rm(directory, { recursive: true, force: true });
+        await fs.rm(outsideDirectory, { recursive: true, force: true });
+    });
+
+    const filename = "123e4567-e89b-42d3-a456-426614174000";
+    const outsideFile = path.join(outsideDirectory, "outside-evidence.txt");
+    await fs.writeFile(outsideFile, "must not be served");
+    try {
+        await fs.symlink(outsideFile, path.join(directory, filename), "file");
+    } catch (error) {
+        if (["EPERM", "EACCES", "ENOTSUP", "ENOSYS"].includes(error.code)) {
+            t.skip(`Symbolic links are unavailable: ${error.code}`);
+            return;
+        }
+        throw error;
+    }
+
+    assert.throws(() => service.readStoredFile(filename), { code: "EINVALIDTYPE" });
+});
+
 test("rejects public storage paths and symlink aliases", async (t) => {
     const original = process.env.EVIDENCE_STORAGE_DIR;
     const publicDirectory = path.resolve(__dirname, "..", "..", "client", "public");

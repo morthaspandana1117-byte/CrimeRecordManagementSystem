@@ -96,7 +96,39 @@ const saveBuffer = async (buffer) => {
     }
 };
 
-const readStoredFile = (storedFilename) => fs.createReadStream(resolveStoredPath(storedFilename));
+const readStoredFile = (storedFilename) => {
+    const storedPath = resolveStoredPath(storedFilename);
+    const root = path.dirname(storedPath);
+    let descriptor;
+    try {
+        const noFollow = fs.constants.O_NOFOLLOW || 0;
+        // lstat covers platforms without O_NOFOLLOW; O_NOFOLLOW closes the
+        // check/open race on platforms that provide it.
+        const pathInfo = fs.lstatSync(storedPath);
+        if (!pathInfo.isFile() || pathInfo.isSymbolicLink()) {
+            const error = new Error("Stored evidence is not a regular file");
+            error.code = "EINVALIDTYPE";
+            throw error;
+        }
+        descriptor = fs.openSync(storedPath, fs.constants.O_RDONLY | noFollow);
+        const descriptorInfo = fs.fstatSync(descriptor);
+        if (!descriptorInfo.isFile()) {
+            const error = new Error("Stored evidence is not a regular file");
+            error.code = "EINVALIDTYPE";
+            throw error;
+        }
+        const realPath = fs.realpathSync(storedPath);
+        if (!isPathInside(root, realPath) || path.dirname(realPath) !== root) {
+            const error = new Error("Stored evidence is outside private storage");
+            error.code = "EINVALIDTYPE";
+            throw error;
+        }
+        return fs.createReadStream(null, { fd: descriptor, autoClose: true });
+    } catch (error) {
+        if (descriptor !== undefined) fs.closeSync(descriptor);
+        throw error;
+    }
+};
 
 const hashStoredFile = async (storedFilename) => {
     const hash = crypto.createHash("sha256");

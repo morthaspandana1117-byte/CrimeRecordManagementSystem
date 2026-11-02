@@ -955,7 +955,8 @@ const downloadEvidence = async (req, res) => {
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
         }
 
-        const evidence = await Evidence.findById(req.params.id).select("-__v");
+        const evidence = await Evidence.findById(req.params.id)
+            .select("caseId evidenceId fileUrl fileName mimeType +storedFilename");
         if (!evidence) {
             return notFound(res, "Evidence");
         }
@@ -969,7 +970,7 @@ const downloadEvidence = async (req, res) => {
             });
         }
 
-        if (!evidence.fileUrl) {
+        if (!evidence.storedFilename) {
             return res.status(404).json({
                 success: false,
                 message: "No evidence file is attached for this record",
@@ -977,18 +978,44 @@ const downloadEvidence = async (req, res) => {
             });
         }
 
-        return res.status(200).json({
-            success: true,
-            data: {
-                evidenceId: evidence.evidenceId,
-                caseId: evidence.caseId,
-                downloadUrl: evidence.fileUrl,
-                fileUrl: evidence.fileUrl,
-                type: evidence.type,
-                status: evidence.status,
-                verificationStatus: evidence.verificationStatus || "unverified",
-            },
+        let stream;
+        try {
+            stream = evidenceFileService.readStoredFile(evidence.storedFilename);
+        } catch (error) {
+            if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
+                return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
+            }
+            return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
+        }
+
+        const safeName = String(evidence.fileName || "evidence")
+            .normalize("NFKD")
+            .replace(/[\\/\r\n\u0000-\u001f\u007f]/g, "_")
+            .replace(/[^\w.() -]/g, "_")
+            .replace(/^[. ]+|[. ]+$/g, "")
+            .slice(0, 150) || "evidence";
+        const mimeType = typeof evidence.mimeType === "string" && /^[\w.+-]+\/[\w.+-]+$/.test(evidence.mimeType)
+            ? evidence.mimeType
+            : "application/octet-stream";
+
+        stream.once("readable", () => {
+            res.status(200);
+            res.set({
+                "Content-Type": mimeType,
+                "Content-Disposition": `attachment; filename="${safeName}"`,
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            });
+            stream.pipe(res);
         });
+        stream.once("error", (error) => {
+            if (res.headersSent) return res.destroy();
+            if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
+                return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
+            }
+            return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
+        });
+        return undefined;
     } catch (error) {
         return handleError(res, error, "Download evidence error");
     }

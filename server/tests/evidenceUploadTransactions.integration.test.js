@@ -141,6 +141,67 @@ test("evidence, custody, case history, and audit writes commit together on a rep
     assert.deepEqual(await fs.readFile(path.join(evidenceStorageDirectory, record.storedFilename)), evidenceBytes);
 });
 
+test("authorized evidence downloads stream private bytes with safe headers", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD");
+    assert.equal(uploaded.status, 201);
+    const record = await Evidence.findById(uploaded.body.data._id).select("+storedFilename");
+    record.fileName = '../private\r\nX-Evil: yes.pdf';
+    await record.save();
+
+    const response = await request(app)
+        .get(`/api/evidence/${record._id}/download`)
+        .set("Authorization", `Bearer ${token}`)
+        .buffer(true);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, evidenceBytes);
+    assert.equal(response.headers["content-type"], "application/pdf");
+    assert.equal(response.headers["x-content-type-options"], "nosniff");
+    assert.equal(response.headers["cache-control"], "private, no-store");
+    assert.match(response.headers["content-disposition"], /^attachment; filename=/);
+    assert.doesNotMatch(response.headers["content-disposition"], /[\r\n/\\]/);
+    assert.doesNotMatch(response.text || "", new RegExp(evidenceStorageDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("evidence download rejects unauthenticated and unassigned requests", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-AUTH");
+    const unauthenticated = await request(app).get(`/api/evidence/${uploaded.body.data._id}/download`);
+    assert.equal(unauthenticated.status, 401);
+
+    const originalAssignment = caseRecord.assignedOfficerIds.map(String);
+    await Case.updateOne({ _id: caseRecord._id }, { $set: { assignedOfficerIds: [] } });
+    try {
+        const denied = await request(app)
+            .get(`/api/evidence/${uploaded.body.data._id}/download`)
+            .set("Authorization", `Bearer ${token}`);
+        assert.equal(denied.status, 403);
+        assert.equal(denied.body.error, "CASE_ACCESS_DENIED");
+    } finally {
+        await Case.updateOne({ _id: caseRecord._id }, { $set: { assignedOfficerIds: originalAssignment } });
+    }
+});
+
+test("evidence download handles invalid IDs and missing records", async () => {
+    const invalid = await request(app).get("/api/evidence/not-an-id/download").set("Authorization", `Bearer ${token}`);
+    assert.equal(invalid.status, 400);
+    assert.equal(invalid.body.error, "INVALID_EVIDENCE_ID");
+
+    const missing = await request(app).get("/api/evidence/507f1f77bcf86cd799439011/download").set("Authorization", `Bearer ${token}`);
+    assert.equal(missing.status, 404);
+    assert.equal(missing.body.error, "EVIDENCE_NOT_FOUND");
+});
+
+test("evidence download returns a consistent not found response when storage is missing", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-MISSING-FILE");
+    const record = await Evidence.findById(uploaded.body.data._id).select("+storedFilename");
+    await evidenceFileService.deleteStoredFile(record.storedFilename);
+    const response = await request(app)
+        .get(`/api/evidence/${record._id}/download`)
+        .set("Authorization", `Bearer ${token}`);
+    assert.equal(response.status, 404);
+    assert.equal(response.body.error, "EVIDENCE_FILE_NOT_FOUND");
+    assert.doesNotMatch(JSON.stringify(response.body), /storedFilename|private-evidence|[A-Z]:\\/i);
+});
+
 test("an uncertain withTransaction result preserves a file even if MongoDB committed it", async () => {
     const originalStartSession = mongoose.startSession;
     mock.method(mongoose, "startSession", async (...args) => {
