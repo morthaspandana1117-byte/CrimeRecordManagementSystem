@@ -128,6 +128,8 @@ test.after(async () => {
 test("evidence, custody, case history, and audit writes commit together on a replica set", async () => {
     const response = await upload("E-EVIDENCE-TXN-SUCCESS");
     assert.equal(response.status, 201);
+    assert.equal(response.body.data.hasFile, true);
+    assert.equal(Object.hasOwn(response.body.data, "storedFilename"), false);
 
     const record = await Evidence.findById(response.body.data._id).select("+storedFilename").lean();
     assert.ok(record);
@@ -139,6 +141,32 @@ test("evidence, custody, case history, and audit writes commit together on a rep
         action: "EVIDENCE_FILE_UPLOADED",
     }), 1);
     assert.deepEqual(await fs.readFile(path.join(evidenceStorageDirectory, record.storedFilename)), evidenceBytes);
+
+    const listed = await request(app)
+        .get(`/api/evidence?caseId=${caseRecord._id}`)
+        .set("Authorization", `Bearer ${token}`);
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.data.find((item) => item._id === record._id.toString()).hasFile, true);
+    assert.equal(Object.hasOwn(listed.body.data[0], "storedFilename"), false);
+});
+
+test("JSON evidence creation remains available and reports no private attachment", async () => {
+    const response = await request(app)
+        .post("/api/evidence")
+        .set("Authorization", `Bearer ${token}`)
+        .send({
+            evidenceId: "E-EVIDENCE-JSON-ONLY",
+            caseId: caseRecord._id.toString(),
+            type: "Document",
+            description: "Evidence created without an attachment",
+            collectedBy: officer._id.toString(),
+            collectionDate: "2026-10-12",
+            location: "Transaction Test Lane",
+            status: "Collected",
+        });
+    assert.equal(response.status, 201);
+    assert.equal(response.body.data.hasFile, false);
+    assert.equal(Object.hasOwn(response.body.data, "storedFilename"), false);
 });
 
 test("authorized evidence downloads stream private bytes with safe headers", async () => {

@@ -109,6 +109,18 @@ const populate = (query) =>
         .populate("createdBy", "username role")
         .populate("updatedBy", "username role");
 
+const exposeHasFile = (evidence) => {
+    if (!evidence) return evidence;
+    if (Array.isArray(evidence)) return evidence.map(exposeHasFile);
+    const storedFilename = typeof evidence.get === "function"
+        ? evidence.get("storedFilename")
+        : evidence.storedFilename;
+    const response = typeof evidence.toObject === "function" ? evidence.toObject() : { ...evidence };
+    response.hasFile = Boolean(storedFilename);
+    delete response.storedFilename;
+    return response;
+};
+
 const normalizeEvidenceStatus = (value) => {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
@@ -467,12 +479,12 @@ const createEvidence = async (req, res) => {
             newValue: { evidenceId: record.evidenceId, investigationRound: record.investigationRound, status: record.status },
             metadata: { evidenceId: record.evidenceId, caseId: record.caseId.toString() },
         });
-        const populatedRecord = await populate(Evidence.findById(record._id).select("-__v"));
+        const populatedRecord = await populate(Evidence.findById(record._id).select("-__v +storedFilename"));
 
         return res.status(201).json({
             success: true,
             message: "Evidence created successfully",
-            data: populatedRecord,
+            data: exposeHasFile(populatedRecord),
         });
     } catch (error) {
         if (error.code === 11000 && error.keyPattern?.evidenceId) {
@@ -595,7 +607,7 @@ const createEvidenceWithFile = async (req, res) => {
         if (activeSession) await CaseHistory.create([caseHistoryRecord], { session: activeSession });
         else await CaseHistory.create(caseHistoryRecord);
 
-        const evidenceQuery = Evidence.findById(record._id).select("-__v");
+        const evidenceQuery = Evidence.findById(record._id).select("-__v +storedFilename");
         if (activeSession) evidenceQuery.session(activeSession);
         const populated = await populate(evidenceQuery);
         await auditService.log({
@@ -603,13 +615,13 @@ const createEvidenceWithFile = async (req, res) => {
             action: "EVIDENCE_FILE_UPLOADED",
             entityType: "Evidence",
             entityId: record._id,
-            after: populated,
+            after: exposeHasFile(populated),
             method: req.method,
             path: `${req.baseUrl}${req.path}`,
             session: activeSession,
             auditId: uploadAuditId,
         });
-        return populated;
+        return exposeHasFile(populated);
     };
 
     try {
@@ -783,7 +795,7 @@ const getAllEvidence = async (req, res) => {
         const totalPages = Math.max(1, Math.ceil(totalRecords / limit));
         const records = await populate(
             Evidence.find(filter)
-                .select("-__v")
+                .select("-__v +storedFilename")
                 .sort({ collectionDate: -1 })
                 .skip((page - 1) * limit)
                 .limit(limit),
@@ -798,7 +810,7 @@ const getAllEvidence = async (req, res) => {
                 totalRecords,
                 totalPages,
             },
-            data: records,
+            data: exposeHasFile(records),
         });
     } catch (error) {
         return handleError(res, error, "Get evidence error");
@@ -810,16 +822,16 @@ const getEvidenceById = async (req, res) => {
         if (!isValidObjectId(req.params.id))
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
 
-        const rawRecord = await Evidence.findById(req.params.id).select("-__v");
+        const rawRecord = await Evidence.findById(req.params.id).select("-__v +storedFilename");
         if (rawRecord) {
             const caseRecord = await Case.findById(rawRecord.caseId).select("assignedOfficerIds");
             if (!canAccessCase(req, caseRecord)) {
                 return res.status(403).json({ success: false, message: "You may only access evidence for assigned cases", error: "CASE_ACCESS_DENIED" });
             }
         }
-        const record = await populate(rawRecord ? Evidence.findById(req.params.id).select("-__v") : Evidence.findById(req.params.id));
+        const record = await populate(rawRecord ? Evidence.findById(req.params.id).select("-__v +storedFilename") : Evidence.findById(req.params.id).select("+storedFilename"));
         return record
-            ? res.status(200).json({ success: true, data: record })
+            ? res.status(200).json({ success: true, data: exposeHasFile(record) })
             : notFound(res, "Evidence");
     } catch (error) {
         return handleError(res, error, "Get evidence error");
@@ -865,14 +877,14 @@ const updateEvidence = async (req, res) => {
             Evidence.findByIdAndUpdate(req.params.id, updates, {
                 new: true,
                 runValidators: true,
-            }).select("-__v"),
+            }).select("-__v +storedFilename"),
         );
 
         return record
             ? res.status(200).json({
                   success: true,
                   message: "Evidence updated successfully",
-                  data: record,
+                  data: exposeHasFile(record),
               })
             : notFound(res, "Evidence");
     } catch (error) {
@@ -920,7 +932,7 @@ const updateEvidenceStatus = async (req, res) => {
                 req.params.id,
                 { status: normalizedStatus, updatedBy: req.user?.userId },
                 { new: true, runValidators: true },
-            ).select("-__v"),
+            ).select("-__v +storedFilename"),
         );
 
         if (record) {
@@ -941,7 +953,7 @@ const updateEvidenceStatus = async (req, res) => {
             ? res.status(200).json({
                   success: true,
                   message: "Evidence status updated successfully",
-                  data: record,
+                  data: exposeHasFile(record),
               })
             : notFound(res, "Evidence");
     } catch (error) {
@@ -1253,7 +1265,7 @@ const verifyEvidence = async (req, res) => {
                 status: nextVerificationStatus === "rejected" ? evidence.status : "Verified",
             },
             { new: true, runValidators: true },
-        ).select("-__v");
+        ).select("-__v +storedFilename");
 
         await appendCaseHistory({
             caseId: evidence.caseId,
@@ -1271,7 +1283,7 @@ const verifyEvidence = async (req, res) => {
             ? res.status(200).json({
                   success: true,
                   message: nextVerificationStatus === "verified" ? "Evidence verified successfully" : "Evidence verification rejected",
-                  data: updated,
+                  data: exposeHasFile(updated),
               })
             : notFound(res, "Evidence");
     } catch (error) {

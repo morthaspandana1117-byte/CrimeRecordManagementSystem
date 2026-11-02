@@ -71,8 +71,9 @@ export const updateCaseStatus = (id, status, details = {}) => api.patch(`/cases/
 export const reopenCase = (id, reopenReason) => api.patch(`/cases/${id}/reopen`, { reopenReason })
 export const getEvidence = (params = {}) => api.get('/evidence', { params })
 export const createEvidence = (evidence) => api.post('/evidence', evidence)
+export const createEvidenceWithFile = (formData) => api.post('/evidence/with-file', formData, { headers: { 'Content-Type': undefined } })
 export const getEvidenceById = (id) => api.get(`/evidence/${id}`)
-export const downloadEvidence = (id) => api.get(`/evidence/${id}/download`)
+export const downloadEvidence = (id) => api.get(`/evidence/${id}/download`, { responseType: 'blob' })
 export const verifyEvidence = (id, payload) => api.patch(`/evidence/${id}/verify`, payload)
 export { TOKEN_STORAGE_KEY }
 export default api

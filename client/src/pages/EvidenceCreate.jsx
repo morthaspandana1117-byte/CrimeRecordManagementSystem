@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { createEvidence, getAssignableOfficers, getCaseById, getCases } from '../services/api'
+import { createEvidence, createEvidenceWithFile, getAssignableOfficers, getCaseById, getCases } from '../services/api'
+import { createEvidenceFormData, evidenceCategories, evidenceFileAccept, validateEvidenceFile } from '../utils/evidenceFiles'
 
-const evidenceTypes = ['Document', 'Photograph', 'Video', 'Weapon', 'Biological', 'Digital', 'Physical', 'Other']
 const evidenceStatuses = ['Collected', 'Under Examination', 'Verified', 'Stored', 'Released', 'Disposed']
-const initialForm = { evidenceId: '', caseId: '', type: 'Document', description: '', collectedBy: '', collectionDate: '', location: '', status: 'Collected', fileUrl: '' }
+const initialForm = { evidenceId: '', caseId: '', type: 'Document', description: '', collectedBy: '', collectionDate: '', location: '', status: 'Collected' }
 const requestMessage = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 
 function EvidenceCreate() {
@@ -19,6 +19,8 @@ function EvidenceCreate() {
   const [lockedCase, setLockedCase] = useState(null)
   const [loadingOptions, setLoadingOptions] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileError, setFileError] = useState('')
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
@@ -54,6 +56,13 @@ function EvidenceCreate() {
     setForm((current) => ({ ...current, [name]: value }))
   }
 
+  const updateFile = (event) => {
+    const nextFile = event.target.files?.[0] || null
+    const validationMessage = validateEvidenceFile(nextFile)
+    setSelectedFile(validationMessage ? null : nextFile)
+    setFileError(validationMessage)
+  }
+
   const submit = async (event) => {
     event.preventDefault()
     setError('')
@@ -64,7 +73,12 @@ function EvidenceCreate() {
     }
     try {
       setSaving(true)
-      await createEvidence({ ...form, evidenceId: form.evidenceId.trim(), description: form.description.trim(), location: form.location.trim(), fileUrl: form.fileUrl.trim() || undefined })
+      const metadata = { ...form, evidenceId: form.evidenceId.trim(), description: form.description.trim(), location: form.location.trim() }
+      if (selectedFile) {
+        await createEvidenceWithFile(createEvidenceFormData(metadata, selectedFile))
+      } else {
+        await createEvidence(metadata)
+      }
       setSuccessMessage('Evidence created successfully.')
       window.setTimeout(() => navigate(caseIdFromUrl ? `/cases/${caseIdFromUrl}` : '/cases'), 500)
     } catch (requestError) {
@@ -93,15 +107,15 @@ function EvidenceCreate() {
               <div className="row g-3">
                 <div className="col-12 col-md-6"><label className="form-label" htmlFor="evidenceId">Evidence ID</label><input className="form-control" id="evidenceId" name="evidenceId" onChange={updateField} required value={form.evidenceId} /></div>
                 <div className="col-12 col-md-6"><label className="form-label" htmlFor="caseId">Related Case</label>{lockedCase ? <input className="form-control" id="caseId" readOnly value={`${lockedCase.caseNo} - ${lockedCase.title || 'Case'}`} /> : <select className="form-select" id="caseId" name="caseId" onChange={updateField} required value={form.caseId}><option value="">Select a Case</option>{cases.map((record) => <option key={record._id} value={record._id}>{record.caseNo} - {record.title || 'Case'}</option>)}</select>}</div>
-                <div className="col-12 col-md-6"><label className="form-label" htmlFor="type">Evidence Type</label><select className="form-select" id="type" name="type" onChange={updateField} value={form.type}>{evidenceTypes.map((type) => <option key={type}>{type}</option>)}</select></div>
+                <div className="col-12 col-md-6"><label className="form-label" htmlFor="type">Evidence Category</label><select className="form-select" id="type" name="type" onChange={updateField} value={form.type}>{evidenceCategories.map((type) => <option key={type} value={type}>{type}</option>)}</select></div>
                 <div className="col-12 col-md-6"><label className="form-label" htmlFor="collectedBy">Collected By</label><select className="form-select" id="collectedBy" name="collectedBy" onChange={updateField} required value={form.collectedBy}><option value="">Select an eligible officer</option>{officers.map((officer) => <option key={officer._id} value={officer._id}>{officer.name} ({officer.badgeNumber || officer.officerId || 'Officer'})</option>)}</select>{!officers.length && <small className="text-secondary">No eligible officers are available.</small>}</div>
                 <div className="col-12 col-md-6"><label className="form-label" htmlFor="collectionDate">Collection Date</label><input className="form-control" id="collectionDate" name="collectionDate" onChange={updateField} required type="date" value={form.collectionDate} /></div>
                 <div className="col-12 col-md-6"><label className="form-label" htmlFor="status">Evidence Status</label><select className="form-select" id="status" name="status" onChange={updateField} value={form.status}>{evidenceStatuses.map((status) => <option key={status}>{status}</option>)}</select></div>
                 <div className="col-12"><label className="form-label" htmlFor="location">Collection Location</label><input className="form-control" id="location" name="location" onChange={updateField} required value={form.location} /></div>
                 <div className="col-12"><label className="form-label" htmlFor="description">Description</label><textarea className="form-control" id="description" name="description" onChange={updateField} required rows="3" value={form.description} /></div>
-                <div className="col-12"><label className="form-label" htmlFor="fileUrl">File URL</label><input className="form-control" id="fileUrl" name="fileUrl" onChange={updateField} placeholder="https://example.com/evidence.jpg" type="url" value={form.fileUrl} /></div>
+                <div className="col-12"><label className="form-label" htmlFor="evidenceFile">Evidence file (optional)</label><input accept={evidenceFileAccept} className="form-control" id="evidenceFile" onChange={updateFile} type="file" />{selectedFile && <small className="d-block mt-1" role="status">Selected: {selectedFile.name}</small>}{fileError && <div className="text-danger mt-1" role="alert">{fileError}</div>}<small className="d-block text-secondary mt-1">PDF, JPEG, PNG, GIF, or WebP; up to 10 MB.</small></div>
               </div>
-              <div className="d-flex justify-content-end gap-2 mt-4"><button className="btn btn-outline-secondary" disabled={saving} onClick={() => navigate(cancelPath)} type="button">Cancel</button><button className="btn btn-primary" disabled={saving || !officers.length} type="submit">{saving ? 'Creating...' : 'Add Evidence'}</button></div>
+              <div className="d-flex justify-content-end gap-2 mt-4"><button className="btn btn-outline-secondary" disabled={saving} onClick={() => navigate(cancelPath)} type="button">Cancel</button><button className="btn btn-primary" disabled={saving || !officers.length || Boolean(fileError)} type="submit">{saving ? 'Creating...' : 'Add Evidence'}</button></div>
             </form>
           )}
         </div>

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer } from '../authority'
 import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { hasPrivateEvidenceFile, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -115,14 +116,16 @@ function CaseDetails() {
   const handleDownloadEvidence = async (item) => {
     try {
       const response = await downloadEvidence(item._id)
-      const fileUrl = response.data?.data?.downloadUrl || response.data?.data?.fileUrl || response.data?.downloadUrl || response.data?.fileUrl
-      if (!fileUrl) {
-        setEvidenceError('This evidence item does not contain a downloadable file.')
-        return
-      }
-      window.open(fileUrl, '_blank', 'noopener,noreferrer')
-    } catch (requestError) {
-      setEvidenceError(message(requestError, 'This evidence file could not be downloaded.'))
+      const blobUrl = window.URL.createObjectURL(response.data)
+      const link = document.createElement('a')
+      link.href = blobUrl
+      link.download = safeEvidenceDownloadFilename(item.fileName, `evidence-${item.evidenceId || 'file'}`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000)
+    } catch {
+      setEvidenceError('This evidence file could not be downloaded. It may be missing or you may not have access.')
     }
   }
 
@@ -230,7 +233,7 @@ function CaseDetails() {
                   <div className="d-flex flex-column flex-md-row justify-content-between gap-2 align-items-md-center">
                     <strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong>
                     <div className="d-flex gap-2 flex-wrap">
-                      {item.fileUrl && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
+                      {hasPrivateEvidenceFile(item) && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
                       {isSeniorOfficer(user) && (
                         <>
                           <button className="btn btn-sm btn-success" disabled={item.verificationStatus === 'verified'} onClick={() => handleVerifyEvidence(item, 'verified')} type="button">Verify</button>

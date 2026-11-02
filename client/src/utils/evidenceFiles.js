@@ -1,0 +1,42 @@
+export const evidenceCategories = ['Document', 'Photograph', 'Video', 'Weapon', 'Biological', 'Digital', 'Physical', 'Other']
+
+export const evidenceFileMaxBytes = 10 * 1024 * 1024
+
+export const evidenceFileAccept = '.pdf,application/pdf,image/jpeg,image/png,image/gif,image/webp'
+
+const supportedEvidenceMimeTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+
+export function validateEvidenceFile(file) {
+  if (!file) return ''
+  if (!supportedEvidenceMimeTypes.has(file.type)) {
+    return 'Choose a PDF, JPEG, PNG, GIF, or WebP file. The file content must match its format.'
+  }
+  if (file.size > evidenceFileMaxBytes) {
+    return 'Evidence files must be 10 MB or smaller.'
+  }
+  return ''
+}
+
+export function createEvidenceFormData(metadata, file) {
+  const formData = new FormData()
+  for (const [key, value] of Object.entries(metadata)) {
+    if (value !== undefined && value !== null) formData.append(key, String(value))
+  }
+  formData.append('file', file, file.name)
+  return formData
+}
+
+export function safeEvidenceDownloadFilename(value, fallback = 'evidence') {
+  const safeName = Array.from(String(value || fallback), (character) => {
+    const code = character.charCodeAt(0)
+    return character === '/' || character === '\\' || code < 32 || code === 127 ? '_' : character
+  }).join('')
+    .replace(/[^\w.() -]/g, '_')
+    .replace(/^[. ]+|[. ]+$/g, '')
+    .slice(0, 150)
+  return safeName || fallback
+}
+
+export function hasPrivateEvidenceFile(record) {
+  return record?.hasFile === true
+}
