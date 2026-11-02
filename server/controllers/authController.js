@@ -7,6 +7,7 @@ const {
     normalizeOfficerRank,
     normalizeOfficerManagementRank,
     normalizeSystemRole,
+    resolveUserAuthority,
 } = require("../middleware/authority");
 const { sendPasswordResetEmail } = require("../services/emailService");
 const auditService = require("../services/auditService");
@@ -173,12 +174,17 @@ const login = async (req, res) => {
             });
         }
 
-        const systemRole = normalizeSystemRole(user.role);
-        const officer = systemRole === "officer"
-            ? await Officer.findOne({ userId: user._id }).select("rank")
-            : null;
-        const rank = officer ? normalizeOfficerRank(officer.rank) : null;
-        const managementRank = officer ? normalizeOfficerManagementRank(officer.rank) : null;
+        const eligibility = await resolveUserAuthority(user);
+        if (eligibility.error) {
+            await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
+            return res.status(eligibility.status).json({
+                success: false,
+                message: eligibility.message,
+                error: eligibility.error,
+            });
+        }
+
+        const { systemRole, rank, managementRank } = eligibility.authority;
         const legacyRole = systemRole === "system_admin" ? "admin" : "officer";
 
         const token = jwt.sign(
@@ -227,7 +233,7 @@ const login = async (req, res) => {
 
 const getMe = async (req, res) => {
     try {
-        const user = await User.findById(req.user.userId).select(
+        const user = req.authority?.user || await User.findById(req.user.userId).select(
             "-passwordHash",
         );
 
@@ -241,7 +247,7 @@ const getMe = async (req, res) => {
 
         const systemRole = normalizeSystemRole(user.role);
         const officer = systemRole === "officer"
-            ? await Officer.findOne({ userId: user._id }).select("rank")
+            ? req.authority?.officer || await Officer.findOne({ userId: user._id }).select("rank")
             : null;
 
         res.status(200).json({

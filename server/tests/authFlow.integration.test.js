@@ -74,6 +74,123 @@ test.after(async () => {
     await replSet.stop();
 });
 
+test("login issues tokens only for eligible officers and preserves system-admin login", async () => {
+    const valid = await registerAndApprove({
+        username: "eligibility-valid",
+        email: "eligibility-valid@crms.test",
+        batchNumber: "ELG001",
+        officerId: "ELG-OFF-001",
+    });
+    const validLogin = await login("eligibility-valid", "ELG001");
+    assert.equal(validLogin.status, 200);
+    assert.ok(validLogin.body.token);
+    assert.equal(validLogin.body.user.status, "approved");
+    assert.equal((await Officer.findOne({ userId: valid.userId })).status, "active");
+
+    const missing = await registerAndApprove({
+        username: "eligibility-missing",
+        email: "eligibility-missing@crms.test",
+        batchNumber: "ELG002",
+        officerId: "ELG-OFF-002",
+    });
+    await Officer.deleteOne({ userId: missing.userId });
+    const missingLogin = await login("eligibility-missing", "ELG002");
+    assert.equal(missingLogin.status, 403);
+    assert.equal(missingLogin.body.error, "OFFICER_INELIGIBLE");
+    assert.equal(missingLogin.body.token, undefined);
+
+    const inactive = await registerAndApprove({
+        username: "eligibility-inactive",
+        email: "eligibility-inactive@crms.test",
+        batchNumber: "ELG003",
+        officerId: "ELG-OFF-003",
+    });
+    await Officer.updateOne({ userId: inactive.userId }, { $set: { status: "inactive" } });
+    const inactiveLogin = await login("eligibility-inactive", "ELG003");
+    assert.equal(inactiveLogin.status, 403);
+    assert.equal(inactiveLogin.body.error, "OFFICER_INELIGIBLE");
+    assert.equal(inactiveLogin.body.token, undefined);
+
+    const unapproved = await registerAndApprove({
+        username: "eligibility-unapproved",
+        email: "eligibility-unapproved@crms.test",
+        batchNumber: "ELG004",
+        officerId: "ELG-OFF-004",
+    });
+    await User.updateOne({ _id: unapproved.userId }, { $set: { status: "pending" } });
+    const unapprovedLogin = await login("eligibility-unapproved", "ELG004");
+    assert.equal(unapprovedLogin.status, 403);
+    assert.equal(unapprovedLogin.body.error, "ACCOUNT_PENDING_APPROVAL");
+    assert.equal(unapprovedLogin.body.token, undefined);
+
+    const invalidRank = await registerAndApprove({
+        username: "eligibility-rank",
+        email: "eligibility-rank@crms.test",
+        batchNumber: "ELG005",
+        officerId: "ELG-OFF-005",
+    });
+    await Officer.collection.updateOne(
+        { userId: new mongoose.Types.ObjectId(invalidRank.userId) },
+        { $set: { rank: "unrecognized_rank" } },
+    );
+    const invalidRankLogin = await login("eligibility-rank", "ELG005");
+    assert.equal(invalidRankLogin.status, 403);
+    assert.equal(invalidRankLogin.body.error, "OFFICER_RANK_REQUIRED");
+    assert.equal(invalidRankLogin.body.token, undefined);
+
+    const adminLogin = await login("flow-admin", "FlowAdmin@123");
+    assert.equal(adminLogin.status, 200);
+    assert.equal(adminLogin.body.user.systemRole, "system_admin");
+    assert.ok(adminLogin.body.token);
+});
+
+test("/auth/me rechecks current eligibility for officers and preserves system-admin access", async () => {
+    const eligible = await registerAndApprove({
+        username: "me-eligible",
+        email: "me-eligible@crms.test",
+        batchNumber: "MEE001",
+        officerId: "MEE-OFF-001",
+    });
+    const eligibleMe = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${eligible.token}`);
+    assert.equal(eligibleMe.status, 200);
+    assert.equal(eligibleMe.body.data.systemRole, "officer");
+    assert.equal(eligibleMe.body.data.status, "approved");
+
+    const deactivated = await request(app)
+        .patch(`/api/officers/${eligible.officerId}/status`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ accountStatus: "inactive" });
+    assert.equal(deactivated.status, 200);
+    const meAfterDeactivation = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${eligible.token}`);
+    assert.equal(meAfterDeactivation.status, 403);
+    assert.equal(meAfterDeactivation.body.error, "ACCOUNT_INACTIVE");
+    assert.equal(meAfterDeactivation.body.data, undefined);
+
+    const ineligible = await registerAndApprove({
+        username: "me-ineligible",
+        email: "me-ineligible@crms.test",
+        batchNumber: "MEE002",
+        officerId: "MEE-OFF-002",
+    });
+    await Officer.updateOne({ userId: ineligible.userId }, { $set: { status: "suspended" } });
+    const meForIneligibleOfficer = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${ineligible.token}`);
+    assert.equal(meForIneligibleOfficer.status, 403);
+    assert.equal(meForIneligibleOfficer.body.error, "OFFICER_INELIGIBLE");
+    assert.equal(meForIneligibleOfficer.body.data, undefined);
+
+    const adminMe = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${adminToken}`);
+    assert.equal(adminMe.status, 200);
+    assert.equal(adminMe.body.data.systemRole, "system_admin");
+});
+
 test("registered officers stay locked out until an admin approves them, then gain operational access", async () => {
     const payload = registrationPayload();
     const registered = await request(app).post("/api/auth/register").send(payload);

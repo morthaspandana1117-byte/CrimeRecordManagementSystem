@@ -72,6 +72,49 @@ const normalizeSystemRole = (value) => {
     return value === "officer" ? "officer" : null;
 };
 
+const resolveUserAuthority = async (user) => {
+    if (!user) {
+        return { error: "USER_NOT_FOUND", message: "Authentication required", status: 401 };
+    }
+    if (!user.isActive) {
+        return { error: "ACCOUNT_INACTIVE", message: "User account is inactive", status: 403 };
+    }
+
+    const systemRole = normalizeSystemRole(user.role);
+    if (!systemRole) {
+        return { error: "UNSUPPORTED_SYSTEM_ROLE", message: "Unsupported system role", status: 403 };
+    }
+
+    let officer = null;
+    let rank = null;
+    if (systemRole === "officer") {
+        if ((user.status || "approved") !== "approved") {
+            return { error: "OFFICER_NOT_APPROVED", message: "Officer account is not approved", status: 403 };
+        }
+        officer = await Officer.findOne({ userId: user._id }).select(
+            "rank status officerId name",
+        );
+        if (!officer || officer.status !== "active") {
+            return { error: "OFFICER_INELIGIBLE", message: "Officer account is not active", status: 403 };
+        }
+        rank = normalizeOfficerRank(officer.rank);
+        if (!rank) {
+            return { error: "OFFICER_RANK_REQUIRED", message: "Officer rank is not configured", status: 403 };
+        }
+    }
+
+    return {
+        authority: {
+            systemRole,
+            rank,
+            // Keep ambiguous legacy rank values unresolved for management checks.
+            managementRank: officer ? normalizeOfficerManagementRank(officer.rank) : null,
+            user,
+            officer,
+        },
+    };
+};
+
 const resolveAuthority = async (req, res, next) => {
     try {
         if (!req.user?.userId) {
@@ -85,69 +128,16 @@ const resolveAuthority = async (req, res, next) => {
         const user = await User.findById(req.user.userId).select(
             "role status isActive username email",
         );
-        if (!user) {
-            return res.status(401).json({
+        const result = await resolveUserAuthority(user);
+        if (result.error) {
+            return res.status(result.status).json({
                 success: false,
-                message: "Authentication required",
-                error: "USER_NOT_FOUND",
+                message: result.message,
+                error: result.error,
             });
         }
-        if (!user.isActive) {
-            return res.status(403).json({
-                success: false,
-                message: "User account is inactive",
-                error: "ACCOUNT_INACTIVE",
-            });
-        }
-
-        const systemRole = normalizeSystemRole(user.role);
-        if (!systemRole) {
-            return res.status(403).json({
-                success: false,
-                message: "Unsupported system role",
-                error: "UNSUPPORTED_SYSTEM_ROLE",
-            });
-        }
-
-        let officer = null;
-        let rank = null;
-        if (systemRole === "officer") {
-            if ((user.status || "approved") !== "approved") {
-                return res.status(403).json({
-                    success: false,
-                    message: "Officer account is not approved",
-                    error: "OFFICER_NOT_APPROVED",
-                });
-            }
-            officer = await Officer.findOne({ userId: user._id }).select(
-                "rank status officerId name",
-            );
-            if (!officer || officer.status !== "active") {
-                return res.status(403).json({
-                    success: false,
-                    message: "Officer account is not active",
-                    error: "OFFICER_INELIGIBLE",
-                });
-            }
-            rank = normalizeOfficerRank(officer.rank);
-            if (!rank) {
-                return res.status(403).json({
-                    success: false,
-                    message: "Officer rank is not configured",
-                    error: "OFFICER_RANK_REQUIRED",
-                });
-            }
-        }
-
-        req.authority = {
-            systemRole,
-            rank,
-            // Ambiguous legacy "investigating_officer" values stay unresolved
-            // for management authorization instead of being assigned a rank.
-            managementRank: officer ? normalizeOfficerManagementRank(officer.rank) : null,
-            user,
-            officer,
-        };
+        req.authority = result.authority;
+        const { systemRole, rank } = req.authority;
         req.user.systemRole = systemRole;
         req.user.rank = rank;
         // Preserve the legacy JWT role for existing frontend/API consumers.
@@ -189,6 +179,7 @@ module.exports = {
     normalizeOfficerManagementRank,
     canManageOfficerRank,
     normalizeSystemRole,
+    resolveUserAuthority,
     resolveAuthority,
     requireAuthority,
 };
