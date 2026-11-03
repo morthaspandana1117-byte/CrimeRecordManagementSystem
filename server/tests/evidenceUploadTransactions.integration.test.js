@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
+const http = require("node:http");
+const { Readable } = require("node:stream");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -23,6 +25,7 @@ const EvidenceCustodyHistory = require("../models/EvidenceCustodyHistory");
 const CaseHistory = require("../models/CaseHistory");
 const AuditLog = require("../models/AuditLog");
 const evidenceFileService = require("../services/evidenceFileService");
+const auditService = require("../services/auditService");
 
 let replSet;
 let app;
@@ -51,6 +54,55 @@ const takeArtifactSnapshot = async () => ({
     caseHistory: await CaseHistory.countDocuments({ caseId: caseRecord._id, actionType: "evidence_added" }),
     audit: await AuditLog.countDocuments({ entityType: "Evidence", action: "EVIDENCE_FILE_UPLOADED" }),
     files: await fs.readdir(evidenceStorageDirectory),
+});
+
+const waitForAudit = async (filter) => {
+    for (let attempt = 0; attempt < 30; attempt++) {
+        const record = await AuditLog.findOne(filter).lean();
+        if (record) return record;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return null;
+};
+
+const waitForDownloadResponse = async (evidenceId, { abortOnData = false } = {}) => {
+    const server = app.listen(0);
+    try {
+        const address = server.address();
+        return await new Promise((resolve, reject) => {
+            const client = http.get({
+                hostname: "127.0.0.1",
+                port: address.port,
+                path: `/api/evidence/${evidenceId}/download`,
+                headers: { Authorization: `Bearer ${token}` },
+            }, (response) => {
+                let aborted = false;
+                const chunks = [];
+                response.on("data", (chunk) => {
+                    chunks.push(chunk);
+                    if (abortOnData && !aborted) {
+                        aborted = true;
+                        response.destroy();
+                    }
+                });
+                response.once("aborted", () => resolve({ status: response.statusCode, aborted: true, body: Buffer.concat(chunks) }));
+                response.once("end", () => resolve({ status: response.statusCode, aborted: false, body: Buffer.concat(chunks) }));
+                response.once("error", reject);
+            });
+            client.on("error", (error) => {
+                if (error.code !== "ECONNRESET") reject(error);
+            });
+        });
+    } finally {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+    }
+};
+
+const countDownloadEvents = (evidenceId) => AuditLog.countDocuments({
+    entityType: "Evidence",
+    entityId: evidenceId,
+    action: { $in: ["EVIDENCE_FILE_DOWNLOADED", "EVIDENCE_FILE_DOWNLOAD_FAILED"] },
 });
 
 test.before(async () => {
@@ -188,6 +240,19 @@ test("authorized evidence downloads stream private bytes with safe headers", asy
     assert.match(response.headers["content-disposition"], /^attachment; filename=/);
     assert.doesNotMatch(response.headers["content-disposition"], /[\r\n/\\]/);
     assert.doesNotMatch(response.text || "", new RegExp(evidenceStorageDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+    const auditFilter = { entityType: "Evidence", entityId: record._id, action: "EVIDENCE_FILE_DOWNLOADED" };
+    const audit = await waitForAudit(auditFilter);
+    assert.ok(audit);
+    assert.equal(await AuditLog.countDocuments(auditFilter), 1);
+    assert.equal(String(audit.actor), String(officer.userId));
+    assert.equal(audit.changes.after.caseId, caseRecord._id.toString());
+    assert.equal(audit.changes.after.downloadOutcome, "completed");
+    assert.equal(audit.metadata.method, "GET");
+    assert.match(audit.metadata.path, /\/api\/evidence\/.+\/download$/);
+    assert.ok(Math.abs(Date.now() - audit.occurredAt.getTime()) < 10000);
+    assert.doesNotMatch(JSON.stringify(audit), /storedFilename|private-evidence|[A-Z]:\\/i);
+    assert.equal(await countDownloadEvents(record._id), 1, "finish and close around a completed response must not duplicate the audit event");
 });
 
 test("evidence download rejects unauthenticated and unassigned requests", async () => {
@@ -203,6 +268,15 @@ test("evidence download rejects unauthenticated and unassigned requests", async 
             .set("Authorization", `Bearer ${token}`);
         assert.equal(denied.status, 403);
         assert.equal(denied.body.error, "CASE_ACCESS_DENIED");
+        assert.doesNotMatch(JSON.stringify(denied.body), /storedFilename|private-evidence|caseId|fileName/i);
+        const deniedAudit = await waitForAudit({
+            entityType: "Evidence",
+            actor: officer.userId,
+            action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+            "changes.after.downloadOutcome": "case_access_denied",
+        });
+        assert.ok(deniedAudit);
+        assert.equal(deniedAudit.entityId, null);
     } finally {
         await Case.updateOne({ _id: caseRecord._id }, { $set: { assignedOfficerIds: originalAssignment } });
     }
@@ -212,10 +286,25 @@ test("evidence download handles invalid IDs and missing records", async () => {
     const invalid = await request(app).get("/api/evidence/not-an-id/download").set("Authorization", `Bearer ${token}`);
     assert.equal(invalid.status, 400);
     assert.equal(invalid.body.error, "INVALID_EVIDENCE_ID");
+    const invalidAudit = await waitForAudit({
+        entityType: "Evidence",
+        actor: officer.userId,
+        action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+        "changes.after.downloadOutcome": "invalid_evidence_id",
+    });
+    assert.ok(invalidAudit);
+    assert.equal(invalidAudit.entityId, null);
 
     const missing = await request(app).get("/api/evidence/507f1f77bcf86cd799439011/download").set("Authorization", `Bearer ${token}`);
     assert.equal(missing.status, 404);
     assert.equal(missing.body.error, "EVIDENCE_NOT_FOUND");
+    const missingAudit = await waitForAudit({
+        entityType: "Evidence",
+        entityId: "507f1f77bcf86cd799439011",
+        action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+        "changes.after.downloadOutcome": "evidence_not_found",
+    });
+    assert.ok(missingAudit);
 });
 
 test("evidence download returns a consistent not found response when storage is missing", async () => {
@@ -228,6 +317,169 @@ test("evidence download returns a consistent not found response when storage is 
     assert.equal(response.status, 404);
     assert.equal(response.body.error, "EVIDENCE_FILE_NOT_FOUND");
     assert.doesNotMatch(JSON.stringify(response.body), /storedFilename|private-evidence|[A-Z]:\\/i);
+    const missingFileAudit = await waitForAudit({
+        entityType: "Evidence",
+        entityId: record._id,
+        action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+        "changes.after.downloadOutcome": "file_missing",
+    });
+    assert.ok(missingFileAudit);
+    assert.equal(missingFileAudit.changes.after.caseId, caseRecord._id.toString());
+    assert.doesNotMatch(JSON.stringify(missingFileAudit), /storedFilename|private-evidence|[A-Z]:\\/i);
+});
+
+test("download remains successful if its post-transfer audit write fails and reports the audit failure", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-AUDIT-FAILURE");
+    const record = await Evidence.findById(uploaded.body.data._id);
+    const originalLog = auditService.log;
+    const originalError = console.error;
+    const reportedErrors = [];
+    mock.method(auditService, "log", async () => { throw new Error("simulated audit write failure"); });
+    mock.method(console, "error", (...args) => reportedErrors.push(args));
+
+    try {
+        const response = await request(app)
+            .get(`/api/evidence/${record._id}/download`)
+            .set("Authorization", `Bearer ${token}`)
+            .buffer(true);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(response.status, 200);
+        assert.deepEqual(response.body, evidenceBytes);
+        assert.ok(reportedErrors.some(([message]) => message === "Evidence download audit logging failed:"));
+    } finally {
+        auditService.log = originalLog;
+        console.error = originalError;
+    }
+});
+
+test("an interrupted download records exactly one stream_interrupted failure", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-INTERRUPTED");
+    let pushed = false;
+    const source = new Readable({
+        read() {
+            if (pushed) return;
+            pushed = true;
+            this.push(Buffer.alloc(32 * 1024, "a"));
+            setTimeout(() => { if (!this.destroyed) this.push(Buffer.alloc(32 * 1024, "b")); }, 100);
+        },
+    });
+    const originalRead = evidenceFileService.readStoredFile;
+    mock.method(evidenceFileService, "readStoredFile", () => source);
+    try {
+        const response = await waitForDownloadResponse(uploaded.body.data._id, { abortOnData: true });
+        assert.equal(response.status, 200);
+        assert.equal(response.aborted, true);
+        const audit = await waitForAudit({
+            entityType: "Evidence",
+            entityId: uploaded.body.data._id,
+            action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+            "changes.after.downloadOutcome": "stream_interrupted",
+        });
+        assert.ok(audit);
+        assert.equal(await countDownloadEvents(uploaded.body.data._id), 1);
+    } finally {
+        source.destroy();
+        evidenceFileService.readStoredFile = originalRead;
+    }
+});
+
+test("a stream error before headers returns the safe 500 response and records one failure", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-STREAM-ERROR-BEFORE-HEADERS");
+    let failed = false;
+    const source = new Readable({
+        read() {
+            if (failed) return;
+            failed = true;
+            process.nextTick(() => this.destroy(new Error("simulated stream read failure")));
+        },
+    });
+    const originalRead = evidenceFileService.readStoredFile;
+    mock.method(evidenceFileService, "readStoredFile", () => source);
+    try {
+        const response = await request(app)
+            .get(`/api/evidence/${uploaded.body.data._id}/download`)
+            .set("Authorization", `Bearer ${token}`);
+        assert.equal(response.status, 500);
+        assert.deepEqual(response.body, { success: false, message: "Server error", error: "SERVER_ERROR" });
+        const audit = await waitForAudit({
+            entityType: "Evidence",
+            entityId: uploaded.body.data._id,
+            action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+            "changes.after.downloadOutcome": "stream_failed",
+        });
+        assert.ok(audit);
+        assert.equal(await countDownloadEvents(uploaded.body.data._id), 1);
+    } finally {
+        source.destroy();
+        evidenceFileService.readStoredFile = originalRead;
+    }
+});
+
+test("a stream error after headers terminates the response and records one failure", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-STREAM-ERROR-AFTER-HEADERS");
+    let pushed = false;
+    const source = new Readable({
+        read() {
+            if (pushed) return;
+            pushed = true;
+            this.push(Buffer.from("partial evidence"));
+            setTimeout(() => this.destroy(new Error("simulated stream failure after headers")), 25);
+        },
+    });
+    const originalRead = evidenceFileService.readStoredFile;
+    mock.method(evidenceFileService, "readStoredFile", () => source);
+    try {
+        const response = await waitForDownloadResponse(uploaded.body.data._id);
+        assert.equal(response.status, 200);
+        assert.equal(response.aborted, true);
+        const audit = await waitForAudit({
+            entityType: "Evidence",
+            entityId: uploaded.body.data._id,
+            action: "EVIDENCE_FILE_DOWNLOAD_FAILED",
+            "changes.after.downloadOutcome": "stream_failed",
+        });
+        assert.ok(audit);
+        assert.equal(await countDownloadEvents(uploaded.body.data._id), 1);
+    } finally {
+        source.destroy();
+        evidenceFileService.readStoredFile = originalRead;
+    }
+});
+
+test("audit rejection from a stream event handler is handled without an unhandled rejection", async () => {
+    const uploaded = await upload("E-EVIDENCE-DOWNLOAD-STREAM-AUDIT-FAILURE");
+    let pushed = false;
+    const source = new Readable({
+        read() {
+            if (pushed) return;
+            pushed = true;
+            this.push(Buffer.from("partial evidence"));
+            setTimeout(() => this.destroy(new Error("simulated stream failure")), 25);
+        },
+    });
+    const originalRead = evidenceFileService.readStoredFile;
+    const originalLog = auditService.log;
+    const originalError = console.error;
+    let unhandledRejection;
+    const reportedErrors = [];
+    const onUnhandledRejection = (error) => { unhandledRejection = error; };
+    mock.method(evidenceFileService, "readStoredFile", () => source);
+    mock.method(auditService, "log", async () => { throw new Error("simulated audit write failure"); });
+    mock.method(console, "error", (...args) => reportedErrors.push(args));
+    process.once("unhandledRejection", onUnhandledRejection);
+    try {
+        const response = await waitForDownloadResponse(uploaded.body.data._id);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(response.aborted, true);
+        assert.equal(unhandledRejection, undefined);
+        assert.ok(reportedErrors.some(([message]) => message === "Evidence download audit logging failed:"));
+    } finally {
+        process.removeListener("unhandledRejection", onUnhandledRejection);
+        source.destroy();
+        evidenceFileService.readStoredFile = originalRead;
+        auditService.log = originalLog;
+        console.error = originalError;
+    }
 });
 
 test("an uncertain withTransaction result preserves a file even if MongoDB committed it", async () => {
