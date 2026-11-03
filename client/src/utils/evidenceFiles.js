@@ -1,4 +1,13 @@
 export const evidenceCategories = ['Document', 'Photograph', 'Video', 'Weapon', 'Biological', 'Digital', 'Physical', 'Other']
+export const integrityResultLabel = (result) => ({
+  intact: 'Intact – original and current hashes match.',
+  modified: 'Modified – current file hash differs from the original.',
+  missing: 'Missing – stored evidence file is unavailable.',
+}[result] || '')
+export const integrityCheckButtonLabel = (checking) => checking ? 'Checking...' : 'Integrity Check'
+export const integrityCheckErrorMessage = (errorCode) => errorCode === 'EVIDENCE_HASH_UNAVAILABLE'
+  ? 'The original upload hash is unavailable, so integrity could not be confirmed.'
+  : 'The integrity check could not be completed. Please try again or contact an administrator.'
 
 export const evidenceFileMaxBytes = 10 * 1024 * 1024
 

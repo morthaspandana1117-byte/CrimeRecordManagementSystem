@@ -9,9 +9,13 @@ import {
   evidenceFileMaxBytes,
   evidenceVerificationLabel,
   hasPrivateEvidenceFile,
+  integrityCheckButtonLabel,
+  integrityCheckErrorMessage,
+  integrityResultLabel,
   safeEvidenceDownloadFilename,
   validateEvidenceFile,
 } from '../src/utils/evidenceFiles.js'
+import { canCheckEvidenceIntegrity } from '../src/authority.js'
 
 test('evidence category values match the backend enum exactly', () => {
   assert.deepEqual(evidenceCategories, ['Document', 'Photograph', 'Video', 'Weapon', 'Biological', 'Digital', 'Physical', 'Other'])
@@ -38,6 +42,29 @@ test('download visibility depends only on private file metadata and filenames ar
   assert.equal(hasPrivateEvidenceFile({ hasFile: false, fileUrl: 'https://legacy.test/file.pdf' }), false)
   assert.equal(hasPrivateEvidenceFile({ fileUrl: 'https://legacy.test/file.pdf' }), false)
   assert.equal(safeEvidenceDownloadFilename('../case\r\nsecret.pdf'), '_case__secret.pdf')
+})
+
+test('integrity check action is limited to inspector, DSP, and SP officers', () => {
+  for (const rank of ['inspector', 'dsp', 'sp']) {
+    assert.equal(canCheckEvidenceIntegrity({ role: 'officer', rank }), true)
+  }
+  assert.equal(canCheckEvidenceIntegrity({ role: 'officer', rank: 'investigating_officer' }), false)
+  assert.equal(canCheckEvidenceIntegrity({ role: 'admin', rank: 'sp' }), false)
+})
+
+test('integrity outcomes have clear labels and unknown results are not presented as success', () => {
+  assert.match(integrityResultLabel('intact'), /hashes match/)
+  assert.match(integrityResultLabel('modified'), /differs from the original/)
+  assert.match(integrityResultLabel('missing'), /file is unavailable/)
+  assert.equal(integrityResultLabel('error'), '')
+})
+
+test('integrity check exposes a loading label and safe generic failures', () => {
+  assert.equal(integrityCheckButtonLabel(false), 'Integrity Check')
+  assert.equal(integrityCheckButtonLabel(true), 'Checking...')
+  assert.match(integrityCheckErrorMessage('EVIDENCE_HASH_UNAVAILABLE'), /original upload hash is unavailable/)
+  assert.match(integrityCheckErrorMessage('SERVER_ERROR'), /could not be completed/)
+  assert.doesNotMatch(integrityCheckErrorMessage('C:\\private-evidence\\secret'), /private-evidence|secret/)
 })
 
 test('uploaded unverified evidence displays Download and Verify before verification', () => {

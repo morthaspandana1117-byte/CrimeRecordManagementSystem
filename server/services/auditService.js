@@ -4,7 +4,7 @@ const SAFE_FIELDS = {
     FIR: ["firNo", "status", "crimeType", "policeStation", "registeredBy"],
     Case: ["caseNo", "status", "priority", "assignedOfficerIds", "criminalIds", "title"],
     Criminal: ["criminalId", "status", "fullName"],
-    Evidence: ["evidenceId", "status", "verificationStatus", "currentCustodian", "caseId", "collectedBy", "type", "fileName", "fileHash", "fileSize", "mimeType", "uploadedAt"],
+    Evidence: ["evidenceId", "status", "verificationStatus", "currentCustodian", "caseId", "collectedBy", "type", "fileName", "fileHash", "fileSize", "mimeType", "uploadedAt", "integrityResult"],
     Report: ["title", "status", "caseId", "preparedBy"],
     Officer: ["officerId", "rank", "status", "name"],
 };

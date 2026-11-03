@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { getRank, seniorOfficerRanks, isSeniorOfficer } from '../authority'
-import { downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
-import { applyEvidenceVerificationResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
+import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
+import { checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { applyEvidenceVerificationResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -31,6 +31,9 @@ function CaseDetails() {
   const reopenRequestInFlight = useRef(false)
   const [rejectingEvidenceId, setRejectingEvidenceId] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
+  const [integrityResults, setIntegrityResults] = useState({})
+  const [checkingIntegrityIds, setCheckingIntegrityIds] = useState([])
+  const integrityChecksInFlight = useRef(new Set())
 
   const load = useCallback(async ({ showLoading = true } = {}) => {
     try {
@@ -127,6 +130,24 @@ function CaseDetails() {
       window.setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000)
     } catch {
       setEvidenceError('This evidence file could not be downloaded. It may be missing or you may not have access.')
+    }
+  }
+
+  const handleIntegrityCheck = async (item) => {
+    if (integrityChecksInFlight.current.has(item._id)) return
+    integrityChecksInFlight.current.add(item._id)
+    setCheckingIntegrityIds((current) => [...current, item._id])
+    setIntegrityResults((current) => ({ ...current, [item._id]: { error: '' } }))
+    try {
+      const response = await checkEvidenceIntegrity(item._id)
+      const result = response.data?.data?.result
+      if (!['intact', 'modified', 'missing'].includes(result)) throw new Error('Invalid integrity-check response')
+      setIntegrityResults((current) => ({ ...current, [item._id]: { result } }))
+    } catch (requestError) {
+      setIntegrityResults((current) => ({ ...current, [item._id]: { error: integrityCheckErrorMessage(requestError.response?.data?.error) } }))
+    } finally {
+      integrityChecksInFlight.current.delete(item._id)
+      setCheckingIntegrityIds((current) => current.filter((id) => id !== item._id))
     }
   }
 
@@ -236,6 +257,7 @@ function CaseDetails() {
                     <strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong>
                     <div className="d-flex gap-2 flex-wrap">
                       {hasPrivateEvidenceFile(item) && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
+                      {canCheckEvidenceIntegrity(user) && <button className="btn btn-sm btn-outline-info" disabled={checkingIntegrityIds.includes(item._id)} onClick={() => handleIntegrityCheck(item)} type="button">{integrityCheckButtonLabel(checkingIntegrityIds.includes(item._id))}</button>}
                       {isSeniorOfficer(user) && (
                         <>
                           <button className="btn btn-sm btn-success" disabled={item.verificationStatus === 'verified'} onClick={() => handleVerifyEvidence(item, 'verified')} type="button">{evidenceVerificationLabel(item)}</button>
@@ -246,6 +268,8 @@ function CaseDetails() {
                   </div>
                   <div>{displayValue(item.description)}</div>
                   <div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)} · Verification: {item.verificationStatus || 'unverified'}</div>
+                  {integrityResults[item._id]?.result && <div className="small mt-1" role="status">{integrityResultLabel(integrityResults[item._id].result)}</div>}
+                  {integrityResults[item._id]?.error && <div className="small text-danger mt-1" role="alert">{integrityResults[item._id].error}</div>}
                   {item.verificationNotes && <div className="small text-secondary mt-1">Note: {item.verificationNotes}</div>}
                   {item.verifiedAt && <div className="small text-secondary">Verified on {date(item.verifiedAt)}</div>}
                   {rejectingEvidenceId === item._id && (
