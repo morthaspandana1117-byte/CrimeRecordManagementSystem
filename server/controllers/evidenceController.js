@@ -3,6 +3,7 @@ const EvidenceCustodyHistory = require("../models/EvidenceCustodyHistory");
 const Case = require("../models/Case");
 const Officer = require("../models/Officer");
 const CaseHistory = require("../models/CaseHistory");
+const AuditLog = require("../models/AuditLog");
 const evidenceFileService = require("../services/evidenceFileService");
 const auditService = require("../services/auditService");
 const mongoose = require("mongoose");
@@ -1205,6 +1206,92 @@ const getEvidenceCustodyHistory = async (req, res) => {
     }
 };
 
+const getEvidenceHistory = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        }
+
+        const evidence = await Evidence.findById(req.params.id).select("caseId");
+        if (!evidence) return notFound(res, "Evidence");
+
+        const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds");
+        if (!caseRecord || !canAccessCase(req, caseRecord)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only view history for evidence in accessible cases",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
+        const parsePositiveInteger = (value, fallback) => {
+            const candidate = value ?? fallback;
+            if (typeof candidate !== "string" || !/^\d+$/.test(candidate)) return null;
+            const parsed = Number(candidate);
+            return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+        };
+        const page = parsePositiveInteger(req.query.page, "1");
+        const limit = parsePositiveInteger(req.query.limit, "50");
+        if (page === null || limit === null || limit > 100) {
+            return invalid(res, "page must be positive and limit must be between 1 and 100", "INVALID_PAGINATION");
+        }
+
+        const filter = { entityType: "Evidence", entityId: evidence._id };
+        const [events, totalRecords] = await Promise.all([
+            AuditLog.find(filter)
+                .select("actor action occurredAt changes")
+                .populate("actor", "username role")
+                .sort({ occurredAt: -1, _id: -1 })
+                .skip((page - 1) * limit)
+                .limit(limit)
+                .lean(),
+            AuditLog.countDocuments(filter),
+        ]);
+
+        const actorIds = [...new Set(events.map((event) => event.actor?._id?.toString()).filter(Boolean))];
+        const officers = actorIds.length
+            ? await Officer.find({ userId: { $in: actorIds } }).select("userId rank").lean()
+            : [];
+        const rankByUserId = new Map(officers.map((officer) => [String(officer.userId), officer.rank]));
+
+        const data = events.map((event) => {
+            const before = event.changes?.before || {};
+            const after = event.changes?.after || {};
+            const details = {};
+            for (const field of ["status", "verificationStatus", "downloadOutcome", "integrityResult"]) {
+                if (after[field] !== undefined) details[field] = after[field];
+            }
+            if (before.verificationStatus !== undefined) {
+                details.previousVerificationStatus = before.verificationStatus;
+            }
+            return {
+                id: String(event._id),
+                action: event.action,
+                actor: event.actor ? {
+                    username: event.actor.username,
+                    role: event.actor.role,
+                    ...(rankByUserId.has(String(event.actor._id)) ? { rank: rankByUserId.get(String(event.actor._id)) } : {}),
+                } : null,
+                occurredAt: event.occurredAt,
+                ...(Object.keys(details).length ? { details } : {}),
+            };
+        });
+
+        return res.status(200).json({
+            success: true,
+            data,
+            pagination: {
+                page,
+                limit,
+                totalRecords,
+                totalPages: Math.max(1, Math.ceil(totalRecords / limit)),
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Get evidence history error");
+    }
+};
+
 const transferEvidenceCustody = async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
@@ -1438,6 +1525,7 @@ module.exports = {
     checkEvidenceIntegrity,
     verifyEvidence,
     getEvidenceCustodyHistory,
+    getEvidenceHistory,
     transferEvidenceCustody,
     normalizeEvidenceStatus,
     validateEvidenceStatus,

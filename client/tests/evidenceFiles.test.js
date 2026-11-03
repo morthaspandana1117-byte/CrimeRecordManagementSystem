@@ -6,6 +6,10 @@ import {
   applyEvidenceVerificationResponse,
   evidenceCategories,
   evidenceListRequestConfig,
+  evidenceHistoryDescription,
+  evidenceHistoryItemsFromResponse,
+  evidenceHistoryPaginationFromResponse,
+  evidenceHistoryRequestConfig,
   evidenceFileMaxBytes,
   evidenceVerificationLabel,
   hasPrivateEvidenceFile,
@@ -65,6 +69,30 @@ test('integrity check exposes a loading label and safe generic failures', () => 
   assert.match(integrityCheckErrorMessage('EVIDENCE_HASH_UNAVAILABLE'), /original upload hash is unavailable/)
   assert.match(integrityCheckErrorMessage('SERVER_ERROR'), /could not be completed/)
   assert.doesNotMatch(integrityCheckErrorMessage('C:\\private-evidence\\secret'), /private-evidence|secret/)
+})
+
+test('evidence history request targets the selected evidence and includes pagination parameters', () => {
+  assert.deepEqual(evidenceHistoryRequestConfig('evidence/with space', { page: 2, limit: 25 }), {
+    url: '/evidence/evidence%2Fwith%20space/history',
+    params: { page: 2, limit: 25 },
+  })
+})
+
+test('evidence history events use readable labels for existing audit actions', () => {
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_FILE_UPLOADED' }), 'Evidence uploaded')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_FILE_DOWNLOADED' }), 'Evidence downloaded successfully')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_FILE_DOWNLOAD_FAILED', details: { downloadOutcome: 'stream_interrupted' } }), 'Evidence download failed — transfer interrupted')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_VERIFIED' }), 'Evidence verified')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_REJECTED' }), 'Evidence rejected')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_INTEGRITY_CHECKED', details: { integrityResult: 'missing' } }), 'Evidence integrity checked — Missing')
+})
+
+test('evidence history response parsing supports empty data and pagination defaults', () => {
+  const response = { data: { data: [{ id: 'event-1' }], pagination: { page: 2, limit: 2, totalRecords: 3, totalPages: 2 } } }
+  assert.deepEqual(evidenceHistoryItemsFromResponse(response), [{ id: 'event-1' }])
+  assert.deepEqual(evidenceHistoryPaginationFromResponse(response), { page: 2, limit: 2, totalRecords: 3, totalPages: 2 })
+  assert.deepEqual(evidenceHistoryItemsFromResponse({}), [])
+  assert.deepEqual(evidenceHistoryPaginationFromResponse({}), { page: 1, limit: 50, totalRecords: 0, totalPages: 1 })
 })
 
 test('uploaded unverified evidence displays Download and Verify before verification', () => {
