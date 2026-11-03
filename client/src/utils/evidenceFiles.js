@@ -9,6 +9,67 @@ export const integrityCheckErrorMessage = (errorCode) => errorCode === 'EVIDENCE
   ? 'The original upload hash is unavailable, so integrity could not be confirmed.'
   : 'The integrity check could not be completed. Please try again or contact an administrator.'
 
+const downloadOutcomeDescription = {
+  case_access_denied: 'case access denied',
+  evidence_not_found: 'evidence not found',
+  file_missing: 'stored file missing',
+  invalid_stored_file: 'stored file unavailable',
+  invalid_evidence_id: 'invalid evidence ID',
+  storage_error: 'storage unavailable',
+  stream_failed: 'stream failed',
+  stream_interrupted: 'transfer interrupted',
+}
+
+const integrityOutcomeDescription = {
+  intact: 'Intact',
+  modified: 'Modified',
+  missing: 'Missing',
+  error: 'Check failed',
+}
+
+export function evidenceHistoryDescription(event) {
+  switch (event?.action) {
+    case 'EVIDENCE_FILE_UPLOADED': return 'Evidence uploaded'
+    case 'EVIDENCE_FILE_DOWNLOADED': return 'Evidence downloaded successfully'
+    case 'EVIDENCE_FILE_DOWNLOAD_FAILED': {
+      const outcome = downloadOutcomeDescription[event.details?.downloadOutcome]
+      return outcome ? `Evidence download failed — ${outcome}` : 'Evidence download failed'
+    }
+    case 'EVIDENCE_VERIFIED': return 'Evidence verified'
+    case 'EVIDENCE_REJECTED': return 'Evidence rejected'
+    case 'EVIDENCE_INTEGRITY_CHECKED': {
+      const result = integrityOutcomeDescription[event.details?.integrityResult]
+      return result ? `Evidence integrity checked — ${result}` : 'Evidence integrity checked'
+    }
+    default: {
+      const readableAction = String(event?.action || 'Evidence event')
+        .toLowerCase()
+        .split('_')
+        .filter(Boolean)
+        .join(' ')
+      return readableAction ? `${readableAction[0].toUpperCase()}${readableAction.slice(1)}` : 'Evidence event'
+    }
+  }
+}
+
+export function evidenceHistoryItemsFromResponse(response) {
+  return Array.isArray(response?.data?.data) ? response.data.data : []
+}
+
+export function evidenceHistoryPaginationFromResponse(response) {
+  const pagination = response?.data?.pagination
+  return {
+    page: Number.isInteger(pagination?.page) ? pagination.page : 1,
+    limit: Number.isInteger(pagination?.limit) ? pagination.limit : 50,
+    totalRecords: Number.isInteger(pagination?.totalRecords) ? pagination.totalRecords : 0,
+    totalPages: Number.isInteger(pagination?.totalPages) ? pagination.totalPages : 1,
+  }
+}
+
+export function evidenceHistoryRequestConfig(evidenceId, params = {}) {
+  return { url: `/evidence/${encodeURIComponent(evidenceId)}/history`, params }
+}
+
 export const evidenceFileMaxBytes = 10 * 1024 * 1024
 
 export const evidenceFileAccept = '.pdf,application/pdf,image/jpeg,image/png,image/gif,image/webp'

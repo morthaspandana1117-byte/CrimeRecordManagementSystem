@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { evidenceListRequestConfig } from '../utils/evidenceFiles'
+import { evidenceHistoryRequestConfig, evidenceListRequestConfig } from '../utils/evidenceFiles'
 
 const TOKEN_STORAGE_KEY = 'crms_auth_token'
 const DEFAULT_API_BASE_URL = typeof window !== 'undefined'
@@ -77,5 +77,9 @@ export const getEvidenceById = (id) => api.get(`/evidence/${id}`)
 export const downloadEvidence = (id) => api.get(`/evidence/${id}/download`, { responseType: 'blob' })
 export const verifyEvidence = (id, payload) => api.patch(`/evidence/${id}/verify`, payload)
 export const checkEvidenceIntegrity = (id) => api.post(`/evidence/${id}/integrity-check`)
+export const getEvidenceHistory = (id, params = {}) => {
+  const { url, ...config } = evidenceHistoryRequestConfig(id, params)
+  return api.get(url, config)
+}
 export { TOKEN_STORAGE_KEY }
 export default api

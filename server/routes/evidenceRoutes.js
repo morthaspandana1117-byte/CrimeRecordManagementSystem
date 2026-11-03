@@ -14,6 +14,7 @@ router.post("/with-file", evidenceUpload, controller.createEvidenceWithFile);
 router.use(auditCapture);
 
 router.route("/").post(controller.createEvidence).get(controller.getAllEvidence);
+router.get("/:id/history", controller.getEvidenceHistory);
 router.get("/:id/custody", controller.getEvidenceCustodyHistory);
 router.post("/:id/custody/transfer", controller.transferEvidenceCustody);
 router.patch("/:id/status", controller.updateEvidenceStatus);

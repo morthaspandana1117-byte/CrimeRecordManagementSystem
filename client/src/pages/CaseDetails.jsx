@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
-import { checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
-import { applyEvidenceVerificationResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
+import { checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, getEvidenceHistory, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
+const dateTime = (value) => value ? new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Not available'
 const displayValue = (item) => item || 'Not available'
 const canManageCaseLifecycle = (user) => seniorOfficerRanks.includes(getRank(user))
 
@@ -34,6 +35,13 @@ function CaseDetails() {
   const [integrityResults, setIntegrityResults] = useState({})
   const [checkingIntegrityIds, setCheckingIntegrityIds] = useState([])
   const integrityChecksInFlight = useRef(new Set())
+  const [evidenceHistoryId, setEvidenceHistoryId] = useState('')
+  const [evidenceHistory, setEvidenceHistory] = useState([])
+  const [evidenceHistoryPagination, setEvidenceHistoryPagination] = useState({ page: 1, limit: 50, totalRecords: 0, totalPages: 1 })
+  const [evidenceHistoryLoadingId, setEvidenceHistoryLoadingId] = useState('')
+  const [evidenceHistoryError, setEvidenceHistoryError] = useState('')
+  const evidenceHistorySelection = useRef('')
+  const evidenceHistoryRequests = useRef(new Set())
 
   const load = useCallback(async ({ showLoading = true } = {}) => {
     try {
@@ -151,6 +159,42 @@ function CaseDetails() {
     }
   }
 
+  const loadEvidenceHistory = async (evidenceId, page = 1) => {
+    if (evidenceHistoryRequests.current.has(evidenceId)) return
+    evidenceHistoryRequests.current.add(evidenceId)
+    setEvidenceHistoryLoadingId(evidenceId)
+    setEvidenceHistoryError('')
+    try {
+      const response = await getEvidenceHistory(evidenceId, { page, limit: 50 })
+      if (evidenceHistorySelection.current !== evidenceId) return
+      setEvidenceHistory(evidenceHistoryItemsFromResponse(response))
+      setEvidenceHistoryPagination(evidenceHistoryPaginationFromResponse(response))
+    } catch (requestError) {
+      if (evidenceHistorySelection.current === evidenceId) {
+        setEvidenceHistoryError(message(requestError, 'Evidence history could not be loaded.'))
+      }
+    } finally {
+      evidenceHistoryRequests.current.delete(evidenceId)
+      setEvidenceHistoryLoadingId((current) => current === evidenceId ? '' : current)
+    }
+  }
+
+  const handleToggleEvidenceHistory = (item) => {
+    const selectedId = String(item._id)
+    if (evidenceHistorySelection.current === selectedId) {
+      evidenceHistorySelection.current = ''
+      setEvidenceHistoryId('')
+      setEvidenceHistory([])
+      setEvidenceHistoryError('')
+      return
+    }
+    evidenceHistorySelection.current = selectedId
+    setEvidenceHistoryId(selectedId)
+    setEvidenceHistory([])
+    setEvidenceHistoryPagination({ page: 1, limit: 50, totalRecords: 0, totalPages: 1 })
+    void loadEvidenceHistory(selectedId, 1)
+  }
+
   const handleVerifyEvidence = async (item, nextStatus) => {
     if (nextStatus === 'rejected') {
       setRejectingEvidenceId(item._id)
@@ -257,6 +301,7 @@ function CaseDetails() {
                     <strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong>
                     <div className="d-flex gap-2 flex-wrap">
                       {hasPrivateEvidenceFile(item) && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
+                      <button className="btn btn-sm btn-outline-secondary" aria-expanded={evidenceHistoryId === item._id} onClick={() => handleToggleEvidenceHistory(item)} type="button">{evidenceHistoryId === item._id ? 'Hide History' : 'History'}</button>
                       {canCheckEvidenceIntegrity(user) && <button className="btn btn-sm btn-outline-info" disabled={checkingIntegrityIds.includes(item._id)} onClick={() => handleIntegrityCheck(item)} type="button">{integrityCheckButtonLabel(checkingIntegrityIds.includes(item._id))}</button>}
                       {isSeniorOfficer(user) && (
                         <>
@@ -270,6 +315,35 @@ function CaseDetails() {
                   <div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)} · Verification: {item.verificationStatus || 'unverified'}</div>
                   {integrityResults[item._id]?.result && <div className="small mt-1" role="status">{integrityResultLabel(integrityResults[item._id].result)}</div>}
                   {integrityResults[item._id]?.error && <div className="small text-danger mt-1" role="alert">{integrityResults[item._id].error}</div>}
+                  {evidenceHistoryId === String(item._id) && (
+                    <section className="border rounded p-3 mt-3" aria-label={`History for evidence ${item.evidenceId}`}>
+                      <h4 className="h6">Evidence history</h4>
+                      {evidenceHistoryLoadingId === String(item._id) && <p role="status">Loading evidence history...</p>}
+                      {evidenceHistoryError && <div className="alert alert-warning" role="alert">{evidenceHistoryError}<button className="btn btn-sm btn-link" disabled={evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page)} type="button">Retry</button></div>}
+                      {!evidenceHistoryLoadingId && !evidenceHistoryError && evidenceHistory.length === 0 && <p className="mb-0">No history recorded for this evidence.</p>}
+                      {evidenceHistory.length > 0 && (
+                        <>
+                          <ol className="list-unstyled mb-2">
+                            {evidenceHistory.map((event) => (
+                              <li className="border-bottom py-2" key={event.id}>
+                                <strong>{evidenceHistoryDescription(event)}</strong>
+                                <div className="small text-secondary">{event.actor?.username || 'Unknown actor'}{event.actor?.rank ? ` · ${event.actor.rank}` : ''} · <time dateTime={event.occurredAt}>{dateTime(event.occurredAt)}</time></div>
+                                {event.details?.status && <div className="small text-secondary">Status: {event.details.status}</div>}
+                                {event.details?.verificationStatus && <div className="small text-secondary">Verification: {event.details.verificationStatus}</div>}
+                              </li>
+                            ))}
+                          </ol>
+                          {evidenceHistoryPagination.totalPages > 1 && (
+                            <div className="d-flex align-items-center gap-2">
+                              <button className="btn btn-sm btn-outline-secondary" disabled={evidenceHistoryPagination.page <= 1 || evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page - 1)} type="button">Newer</button>
+                              <span className="small">Page {evidenceHistoryPagination.page} of {evidenceHistoryPagination.totalPages}</span>
+                              <button className="btn btn-sm btn-outline-secondary" disabled={evidenceHistoryPagination.page >= evidenceHistoryPagination.totalPages || evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page + 1)} type="button">Older</button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </section>
+                  )}
                   {item.verificationNotes && <div className="small text-secondary mt-1">Note: {item.verificationNotes}</div>}
                   {item.verifiedAt && <div className="small text-secondary">Verified on {date(item.verifiedAt)}</div>}
                   {rejectingEvidenceId === item._id && (

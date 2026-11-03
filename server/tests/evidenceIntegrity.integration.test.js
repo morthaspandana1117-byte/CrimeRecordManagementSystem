@@ -52,6 +52,11 @@ const check = (token, id) => request(app)
     .post(`/api/evidence/${id}/integrity-check`)
     .set("Authorization", `Bearer ${token}`);
 
+const getHistory = (token, id, query = {}) => {
+    const historyRequest = request(app).get(`/api/evidence/${id}/history`).query(query);
+    return token ? historyRequest.set("Authorization", `Bearer ${token}`) : historyRequest;
+};
+
 test.before(async () => {
     replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(replSet.getUri("crms-evidence-integrity"));
@@ -139,4 +144,81 @@ test("only inspector, DSP, and SP can check integrity under the existing case-ac
 test("integrity check validates evidence IDs and reports absent evidence", async () => {
     assert.equal((await check(tokens.inspector, "bad-id")).body.error, "INVALID_EVIDENCE_ID");
     assert.equal((await check(tokens.inspector, "507f1f77bcf86cd799439011")).body.error, "EVIDENCE_NOT_FOUND");
+});
+
+test("evidence history validates IDs, requires authentication, and enforces existing case access", async () => {
+    const evidence = await createEvidence("HISTORY-AUTH-1");
+    assert.equal((await getHistory(tokens.inspector, "bad-id")).status, 400);
+    const absent = await getHistory(tokens.inspector, "507f1f77bcf86cd799439011");
+    assert.equal(absent.status, 404);
+    assert.equal(absent.body.error, "EVIDENCE_NOT_FOUND");
+
+    const unauthenticated = await getHistory(null, evidence._id);
+    assert.equal(unauthenticated.status, 401);
+
+    const originalAssignment = caseRecord.assignedOfficerIds.map(String);
+    await Case.updateOne({ _id: caseRecord._id }, { $pull: { assignedOfficerIds: officers.investigating_officer._id } });
+    try {
+        const denied = await getHistory(tokens.investigating_officer, evidence._id);
+        assert.equal(denied.status, 403);
+        assert.equal(denied.body.error, "CASE_ACCESS_DENIED");
+        assert.equal(Object.hasOwn(denied.body, "data"), false);
+    } finally {
+        await Case.updateOne({ _id: caseRecord._id }, { $set: { assignedOfficerIds: originalAssignment } });
+    }
+});
+
+test("evidence history returns only safe events for that evidence, newest first, with actor rank and pagination", async () => {
+    const evidence = await createEvidence("HISTORY-EVENTS-1");
+    const unrelated = await createEvidence("HISTORY-OTHER-1");
+    const occurredAt = (day) => new Date(Date.UTC(2026, 9, day));
+    await AuditLog.create([
+        { actor: officers.inspector.userId, action: "EVIDENCE_FILE_UPLOADED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(1), changes: { after: { caseId: caseRecord._id, status: "Collected", storedFilename: "private-file-uuid", fileHash: "sensitive-hash" } } },
+        { actor: officers.dsp.userId, action: "EVIDENCE_FILE_DOWNLOADED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(2), changes: { after: { caseId: caseRecord._id, downloadOutcome: "completed", privatePath: "C:\\secret\\evidence" } } },
+        { actor: officers.sp.userId, action: "EVIDENCE_FILE_DOWNLOAD_FAILED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(3), changes: { after: { downloadOutcome: "stream_interrupted", password: "never-return" } } },
+        { actor: officers.inspector.userId, action: "EVIDENCE_VERIFIED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(4), changes: { before: { verificationStatus: "unverified" }, after: { status: "Verified", verificationStatus: "verified", verificationNotes: "not exposed" } } },
+        { actor: officers.dsp.userId, action: "EVIDENCE_REJECTED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(5), changes: { before: { verificationStatus: "verified" }, after: { verificationStatus: "rejected" } } },
+        { actor: officers.sp.userId, action: "EVIDENCE_INTEGRITY_CHECKED", entityType: "Evidence", entityId: evidence._id, occurredAt: occurredAt(6), changes: { after: { integrityResult: "modified", storedFilename: "private-file-uuid" } } },
+        { actor: officers.inspector.userId, action: "EVIDENCE_FILE_UPLOADED", entityType: "Evidence", entityId: unrelated._id, occurredAt: occurredAt(7), changes: { after: { status: "Collected" } } },
+    ]);
+
+    const firstPage = await getHistory(tokens.inspector, evidence._id, { page: 1, limit: 2 });
+    assert.equal(firstPage.status, 200);
+    assert.deepEqual(firstPage.body.data.map((event) => event.action), ["EVIDENCE_INTEGRITY_CHECKED", "EVIDENCE_REJECTED"]);
+    assert.deepEqual(firstPage.body.pagination, { page: 1, limit: 2, totalRecords: 6, totalPages: 3 });
+    assert.equal(firstPage.body.data[0].actor.username, "integrity-sp");
+    assert.equal(firstPage.body.data[0].actor.rank, "sp");
+    assert.equal(firstPage.body.data[0].details.integrityResult, "modified");
+    assert.equal(Object.hasOwn(firstPage.body.data[0], "changes"), false);
+
+    const secondPage = await getHistory(tokens.inspector, evidence._id, { page: 2, limit: 2 });
+    assert.deepEqual(secondPage.body.data.map((event) => event.action), ["EVIDENCE_VERIFIED", "EVIDENCE_FILE_DOWNLOAD_FAILED"]);
+    assert.equal(secondPage.body.data[1].details.downloadOutcome, "stream_interrupted");
+    const thirdPage = await getHistory(tokens.inspector, evidence._id, { page: 3, limit: 2 });
+    assert.deepEqual(thirdPage.body.data.map((event) => event.action), ["EVIDENCE_FILE_DOWNLOADED", "EVIDENCE_FILE_UPLOADED"]);
+    assert.equal(thirdPage.body.data[1].details.status, "Collected");
+
+    const serialized = JSON.stringify([firstPage.body, secondPage.body, thirdPage.body]);
+    assert.doesNotMatch(serialized, /storedFilename|private-file-uuid|C:\\\\secret|sensitive-hash|never-return|not exposed|verificationNotes|privatePath|fileHash/);
+    const invalidPagination = await getHistory(tokens.inspector, evidence._id, { page: 0, limit: 101 });
+    assert.equal(invalidPagination.status, 400);
+    assert.equal(invalidPagination.body.error, "INVALID_PAGINATION");
+    for (const query of [
+        { page: "2abc" },
+        { page: "1.5" },
+        { limit: "50xyz" },
+        { limit: "2.5" },
+    ]) {
+        const malformedPagination = await getHistory(tokens.inspector, evidence._id, query);
+        assert.equal(malformedPagination.status, 400, `expected malformed pagination to be rejected: ${JSON.stringify(query)}`);
+        assert.equal(malformedPagination.body.error, "INVALID_PAGINATION");
+    }
+});
+
+test("evidence with no audit events returns an empty paginated history", async () => {
+    const evidence = await createEvidence("HISTORY-EMPTY-1");
+    const response = await getHistory(tokens.inspector, evidence._id);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.data, []);
+    assert.deepEqual(response.body.pagination, { page: 1, limit: 50, totalRecords: 0, totalPages: 1 });
 });
