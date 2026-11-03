@@ -962,19 +962,61 @@ const updateEvidenceStatus = async (req, res) => {
 };
 
 const downloadEvidence = async (req, res) => {
+    let evidence;
+    let downloadAuditRecorded = false;
+    let streamingResponseStarted = false;
+    const reportDownloadAuditError = (message, error) => {
+        try {
+            console.error(message, error?.message || error);
+        } catch {
+            // A logging failure must not turn a handled stream event into a rejection.
+        }
+    };
+
+    const recordDownloadAudit = async (outcome, { includeEvidence = true } = {}) => {
+        if (downloadAuditRecorded) return;
+        downloadAuditRecorded = true;
+        try {
+            await auditService.log({
+                actor: req.authority?.user?._id || req.user?.userId,
+                action: outcome === "completed" ? "EVIDENCE_FILE_DOWNLOADED" : "EVIDENCE_FILE_DOWNLOAD_FAILED",
+                entityType: "Evidence",
+                entityId: includeEvidence ? evidence?._id || (isValidObjectId(req.params.id) ? req.params.id : undefined) : undefined,
+                after: includeEvidence ? {
+                    ...(evidence?.caseId ? { caseId: evidence.caseId } : {}),
+                    downloadOutcome: outcome,
+                } : { downloadOutcome: outcome },
+                method: req.method,
+                path: `${req.baseUrl}${req.path}`,
+            });
+        } catch (error) {
+            // For a completed/aborted stream the HTTP response can no longer be changed.
+            // Report the audit failure explicitly without exposing it to the downloader.
+            reportDownloadAuditError("Evidence download audit logging failed:", error);
+        }
+    };
+    const recordDownloadAuditFromEvent = (outcome) => {
+        void recordDownloadAudit(outcome).catch((error) => {
+            reportDownloadAuditError("Evidence download audit handler failed:", error);
+        });
+    };
+
     try {
         if (!isValidObjectId(req.params.id)) {
+            await recordDownloadAudit("invalid_evidence_id", { includeEvidence: false });
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
         }
 
-        const evidence = await Evidence.findById(req.params.id)
+        evidence = await Evidence.findById(req.params.id)
             .select("caseId evidenceId fileUrl fileName mimeType +storedFilename");
         if (!evidence) {
+            await recordDownloadAudit("evidence_not_found");
             return notFound(res, "Evidence");
         }
 
         const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds");
         if (!caseRecord || !canAccessCase(req, caseRecord)) {
+            await recordDownloadAudit("case_access_denied", { includeEvidence: false });
             return res.status(403).json({
                 success: false,
                 message: "You may only download evidence for assigned cases",
@@ -983,6 +1025,7 @@ const downloadEvidence = async (req, res) => {
         }
 
         if (!evidence.storedFilename) {
+            await recordDownloadAudit("file_missing");
             return res.status(404).json({
                 success: false,
                 message: "No evidence file is attached for this record",
@@ -995,10 +1038,41 @@ const downloadEvidence = async (req, res) => {
             stream = evidenceFileService.readStoredFile(evidence.storedFilename);
         } catch (error) {
             if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
+                await recordDownloadAudit(error.code === "ENOENT" ? "file_missing" : "invalid_stored_file");
                 return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
             }
+            await recordDownloadAudit("storage_error");
             return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
         }
+
+        const handleStreamError = async (error) => {
+            if (res.headersSent) {
+                const auditWrite = recordDownloadAudit("stream_failed");
+                res.destroy();
+                await auditWrite;
+                return;
+            }
+            if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
+                await recordDownloadAudit(error.code === "ENOENT" ? "file_missing" : "invalid_stored_file");
+                return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
+            }
+            await recordDownloadAudit("stream_failed");
+            return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
+        };
+
+        // Attach the source error listener before readable/pipe listeners so even an
+        // early open/read failure is handled instead of leaving the response pending.
+        stream.once("error", (error) => {
+            void handleStreamError(error).catch((handlerError) => {
+                reportDownloadAuditError("Evidence download stream handler failed:", handlerError);
+                try {
+                    if (res.headersSent) res.destroy();
+                    else res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
+                } catch (responseError) {
+                    reportDownloadAuditError("Evidence download stream response failed:", responseError);
+                }
+            });
+        });
 
         const safeName = String(evidence.fileName || "evidence")
             .normalize("NFKD")
@@ -1010,7 +1084,15 @@ const downloadEvidence = async (req, res) => {
             ? evidence.mimeType
             : "application/octet-stream";
 
+        res.once("finish", () => {
+            if (streamingResponseStarted) recordDownloadAuditFromEvent("completed");
+        });
+        res.once("close", () => {
+            if (!res.writableFinished) recordDownloadAuditFromEvent("stream_interrupted");
+        });
+
         stream.once("readable", () => {
+            streamingResponseStarted = true;
             res.status(200);
             res.set({
                 "Content-Type": mimeType,
@@ -1019,13 +1101,6 @@ const downloadEvidence = async (req, res) => {
                 "Cache-Control": "private, no-store",
             });
             stream.pipe(res);
-        });
-        stream.once("error", (error) => {
-            if (res.headersSent) return res.destroy();
-            if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
-                return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
-            }
-            return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
         });
         return undefined;
     } catch (error) {
