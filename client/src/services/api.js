@@ -76,5 +76,6 @@ export const createEvidenceWithFile = (formData) => api.post('/evidence/with-fil
 export const getEvidenceById = (id) => api.get(`/evidence/${id}`)
 export const downloadEvidence = (id) => api.get(`/evidence/${id}/download`, { responseType: 'blob' })
 export const verifyEvidence = (id, payload) => api.patch(`/evidence/${id}/verify`, payload)
+export const checkEvidenceIntegrity = (id) => api.post(`/evidence/${id}/integrity-check`)
 export { TOKEN_STORAGE_KEY }
 export default api

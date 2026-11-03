@@ -1033,6 +1033,67 @@ const downloadEvidence = async (req, res) => {
     }
 };
 
+const checkEvidenceIntegrity = async (req, res) => {
+    if (!isValidObjectId(req.params.id)) {
+        return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+    }
+
+    try {
+        const evidence = await Evidence.findById(req.params.id)
+            .select("caseId evidenceId fileHash +storedFilename");
+        if (!evidence) return notFound(res, "Evidence");
+
+        const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds");
+        if (!caseRecord || !canAccessCase(req, caseRecord)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only check evidence for assigned cases",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
+        let result;
+        try {
+            if (!evidence.storedFilename) {
+                result = "missing";
+            } else {
+                const calculatedHash = await evidenceFileService.hashStoredFile(evidence.storedFilename);
+                if (!evidence.fileHash || !/^[a-f0-9]{64}$/i.test(evidence.fileHash)) {
+                    await auditIntegrityCheck(req, evidence, "error");
+                    return res.status(409).json({
+                        success: false,
+                        message: "Original evidence hash is unavailable",
+                        error: "EVIDENCE_HASH_UNAVAILABLE",
+                    });
+                }
+                result = calculatedHash === evidence.fileHash.toLowerCase() ? "intact" : "modified";
+            }
+        } catch (error) {
+            if (error.code === "ENOENT") {
+                result = "missing";
+            } else {
+                await auditIntegrityCheck(req, evidence, "error");
+                return handleError(res, error, "Evidence integrity check error");
+            }
+        }
+
+        await auditIntegrityCheck(req, evidence, result);
+        return res.status(200).json({ success: true, data: { evidenceId: evidence.evidenceId, result } });
+    } catch (error) {
+        return handleError(res, error, "Evidence integrity check error");
+    }
+};
+
+const auditIntegrityCheck = (req, evidence, result) => auditService.log({
+    actor: req.authority?.user?._id || req.user?.userId,
+    action: "EVIDENCE_INTEGRITY_CHECKED",
+    entityType: "Evidence",
+    entityId: evidence._id,
+    after: { evidenceId: evidence.evidenceId, integrityResult: result },
+    method: req.method,
+    path: `${req.baseUrl}${req.path}`,
+});
+
 const getEvidenceCustodyHistory = async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
@@ -1299,6 +1360,7 @@ module.exports = {
     updateEvidence,
     updateEvidenceStatus,
     downloadEvidence,
+    checkEvidenceIntegrity,
     verifyEvidence,
     getEvidenceCustodyHistory,
     transferEvidenceCustody,
