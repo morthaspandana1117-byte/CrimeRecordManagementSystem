@@ -14,6 +14,11 @@ const {
     validateReferences,
     handleError,
 } = require("./controllerUtils");
+const {
+    CASE_LIFECYCLE_RANKS,
+    canAccessAssignedRecord,
+    isSeniorOfficerRank,
+} = require("../middleware/authority");
 
 const validCaseStatuses = [
     "Open",
@@ -24,8 +29,6 @@ const validCaseStatuses = [
 ];
 
 const validCasePriorities = ["Low", "Medium", "High", "Critical"];
-const seniorOfficerRanks = new Set(["inspector", "dsp", "sp"]);
-
 const fields = [
     "caseNo",
     "firId",
@@ -81,14 +84,10 @@ const normalizeCaseStatus = (value) => {
 
 const validateCaseStatus = (value) => normalizeCaseStatus(value) !== null;
 
-const isSeniorAuthority = (req) => seniorOfficerRanks.has(req.authority?.rank);
+const isSeniorAuthority = (req) => isSeniorOfficerRank(req.authority?.rank);
 
 const canAccessCase = (req, record) =>
-    isSeniorAuthority(req) ||
-    req.authority?.systemRole === "system_admin" ||
-    record.assignedOfficerIds?.some((officerId) =>
-        String(officerId?._id || officerId) === String(req.authority?.officer?._id),
-    );
+    canAccessAssignedRecord(req.authority, record.assignedOfficerIds);
 
 const normalizeCasePriority = (value) => {
     if (typeof value !== "string") return null;
@@ -397,7 +396,7 @@ const getAllCases = async (req, res) => {
         }
 
         const filter = query.filter;
-        if (req.authority?.rank === "investigating_officer") {
+        if (!isSeniorAuthority(req) && req.authority?.systemRole !== "system_admin") {
             filter.assignedOfficerIds = req.authority.officer._id;
         }
         const page = Number.parseInt(req.query.page ?? "1", 10);
@@ -591,6 +590,13 @@ const assignCaseOfficers = async (req, res) => {
         if (!record) {
             return notFound(res, "Case");
         }
+        if (!CASE_LIFECYCLE_RANKS.includes(req.authority?.rank)) {
+            return res.status(403).json({
+                success: false,
+                message: "Your rank cannot manage case assignments",
+                error: "INSUFFICIENT_PERMISSIONS",
+            });
+        }
         if (!canAccessCase(req, record)) {
             return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
         }
@@ -687,6 +693,13 @@ const updateCaseStatus = async (req, res) => {
 
         const record = await Case.findById(req.params.id);
         if (!record) return notFound(res, "Case");
+        if (!CASE_LIFECYCLE_RANKS.includes(req.authority?.rank)) {
+            return res.status(403).json({
+                success: false,
+                message: "Your rank cannot change case status",
+                error: "INSUFFICIENT_PERMISSIONS",
+            });
+        }
         if (!canAccessCase(req, record)) {
             return res.status(403).json({ success: false, message: "You may only manage assigned cases", error: "CASE_ACCESS_DENIED" });
         }
@@ -859,7 +872,7 @@ const getCaseHistory = async (req, res) => {
         const isAssignedOfficer = record.assignedOfficerIds?.some(
             (officerId) => String(officerId) === String(req.authority?.officer?._id),
         );
-        if (req.authority?.rank === "investigating_officer" && !isAssignedOfficer) {
+        if (!canAccessAssignedRecord(req.authority, record.assignedOfficerIds)) {
             return res.status(403).json({
                 success: false,
                 message: "You may only view history for assigned cases",

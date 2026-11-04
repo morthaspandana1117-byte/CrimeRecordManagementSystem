@@ -109,6 +109,25 @@ export function safeEvidenceDownloadFilename(value, fallback = 'evidence') {
   return safeName || fallback
 }
 
+export const evidenceReportButtonLabel = (loading) => loading ? 'Generating...' : 'Download Evidence Report'
+export const evidenceReportErrorMessage = (error) => error?.response?.data?.message
+  || error?.response?.data?.error
+  || 'The evidence report could not be generated.'
+
+export function triggerEvidenceReportDownload(blob, filename, browser = {}) {
+  const documentRef = browser.document || document
+  const urlRef = browser.URL || window.URL
+  const blobUrl = urlRef.createObjectURL(blob)
+  const link = documentRef.createElement('a')
+  link.href = blobUrl
+  link.download = filename
+  documentRef.body.appendChild(link)
+  link.click()
+  link.remove()
+  const setTimeoutRef = browser.setTimeout || window.setTimeout
+  setTimeoutRef(() => urlRef.revokeObjectURL(blobUrl), 1000)
+}
+
 export function hasPrivateEvidenceFile(record) {
   return record?.hasFile === true
 }

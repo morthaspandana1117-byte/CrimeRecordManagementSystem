@@ -1,9 +1,12 @@
-export const officerRanks = ['investigating_officer', 'inspector', 'dsp', 'sp']
+export const officerRanks = ['investigating_officer', 'sp', 'dsp', 'inspector', 'si', 'asi', 'head_constable', 'constable']
 export const officerRankOptions = [
-	{ value: 'investigating_officer', label: 'Investigating Officer' },
-	{ value: 'inspector', label: 'Inspector' },
-	{ value: 'dsp', label: 'DSP' },
 	{ value: 'sp', label: 'SP' },
+	{ value: 'dsp', label: 'DSP' },
+	{ value: 'inspector', label: 'Inspector' },
+	{ value: 'si', label: 'SI' },
+	{ value: 'asi', label: 'ASI' },
+	{ value: 'head_constable', label: 'Head Constable' },
+	{ value: 'constable', label: 'Constable' },
 ]
 export const seniorOfficerRanks = ['inspector', 'dsp', 'sp']
 export const officerManagementRanks = ['sp', 'dsp', 'inspector', 'si', 'asi', 'head_constable', 'constable']
@@ -11,10 +14,11 @@ export const seniorOfficerManagementRanks = ['sp', 'dsp', 'inspector', 'si']
 
 export const getSystemRole = (user) => user?.systemRole || (user?.role === 'admin' ? 'system_admin' : user?.role === 'officer' ? 'officer' : null)
 const rankAliases = {
-	constable: 'investigating_officer',
-	'head constable': 'investigating_officer',
-	asi: 'investigating_officer',
-	si: 'investigating_officer',
+	constable: 'constable',
+	'head constable': 'head_constable',
+	head_constable: 'head_constable',
+	asi: 'asi',
+	si: 'si',
 	inspector: 'inspector',
 	dsp: 'dsp',
 	sp: 'sp',
@@ -32,5 +36,5 @@ export const getManagementRank = (user) => {
 export const isSystemAdmin = (user) => getSystemRole(user) === 'system_admin'
 export const isOfficer = (user) => getSystemRole(user) === 'officer'
 export const canCheckEvidenceIntegrity = (user) => isOfficer(user) && seniorOfficerRanks.includes(getRank(user))
-export const isSeniorOfficer = (user) => seniorOfficerManagementRanks.includes(getManagementRank(user))
+export const isSeniorOfficer = (user) => isOfficer(user) && seniorOfficerRanks.includes(getRank(user))
 export const canManageOfficers = (user) => isSystemAdmin(user) || isSeniorOfficer(user)

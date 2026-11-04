@@ -7,6 +7,7 @@ const auditService = require("../services/auditService");
 const {
     normalizeOfficerManagementRank,
     canManageOfficerRank,
+    isCanonicalOfficerRank,
 } = require("../middleware/authority");
 
 const {
@@ -204,8 +205,7 @@ const registerOfficer = async (req, res) => {
             );
         }
 
-        const normalizedManagementRank = normalizeOfficerManagementRank(rank);
-        if (!normalizedManagementRank || rank !== normalizedManagementRank) {
+        if (!isCanonicalOfficerRank(rank)) {
             return invalid(
                 res,
                 "rank must be one of: sp, dsp, inspector, si, asi, head_constable, constable",
@@ -263,7 +263,7 @@ const registerOfficer = async (req, res) => {
             officerId: officerId.trim(),
             badgeNumber: batchNumber,
             name: name.trim(),
-            rank: normalizedManagementRank,
+            rank: rank.trim().toLowerCase(),
             department,
             station: station.trim(),
             phoneNumber: phoneNumber.trim(),

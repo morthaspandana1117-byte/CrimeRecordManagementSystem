@@ -140,4 +140,77 @@ const filenameForReport = (type, data) => {
     return "crime-statistics-report.pdf";
 };
 
-module.exports = { createPdfBuffer, sectionsForReport, filtersForReport, filenameForReport };
+const evidenceHistoryReportSections = ({
+    evidence,
+    integrityChecks,
+    custodyEvents,
+    pendingTransfer,
+    auditEvents,
+}) => {
+    const officerName = (officer) => officer?.name || officer?.officerId || "Not available";
+    const actorName = (actor) => actor?.username || "System";
+    const dateValue = (value) => value ? new Date(value).toISOString() : "Not available";
+
+    return [
+        {
+            title: "Evidence metadata",
+            rows: [
+                { label: "Evidence identifier", value: evidence.evidenceId },
+                { label: "Case", value: evidence.caseId?.caseNo || evidence.caseId?._id || "Not available" },
+                { label: "Case title", value: evidence.caseId?.title || "Not available" },
+                { label: "Type", value: evidence.type },
+                { label: "Description", value: evidence.description },
+                { label: "Collected by", value: officerName(evidence.collectedBy) },
+                { label: "Collection date", value: dateValue(evidence.collectionDate) },
+                { label: "Location", value: evidence.location },
+                { label: "Status", value: evidence.status },
+                { label: "Verification status", value: evidence.verificationStatus || "unverified" },
+                { label: "Verified at", value: dateValue(evidence.verifiedAt) },
+                { label: "Current custodian", value: officerName(evidence.currentCustodian) },
+            ],
+        },
+        {
+            title: "Integrity checks",
+            rows: integrityChecks.length
+                ? integrityChecks.map((event) => ({
+                    label: `${event.changes?.after?.integrityResult || "Result unavailable"} (${dateValue(event.occurredAt)})`,
+                    value: `Checked by ${actorName(event.actor)}`,
+                }))
+                : [{ label: "Result", value: "No integrity check has been recorded; evidence integrity was not confirmed." }],
+        },
+        {
+            title: "Chain of custody",
+            rows: [
+                ...(custodyEvents.length
+                    ? custodyEvents.map((event) => ({
+                        label: `${event.action} - ${event.status} (${dateValue(event.timestamp)})`,
+                        value: `${officerName(event.fromCustodian)} -> ${officerName(event.toCustodian)}; performed by ${officerName(event.performedByOfficer)}`,
+                    }))
+                    : [{ label: "Events", value: "No custody history is available." }]),
+                ...(pendingTransfer
+                    ? [{
+                        label: `PENDING TRANSFER (${dateValue(pendingTransfer.initiatedAt)})`,
+                        value: `${officerName(pendingTransfer.fromCustodian)} -> ${officerName(pendingTransfer.toCustodian)}; initiated by ${officerName(pendingTransfer.initiatedByOfficer)}`,
+                    }]
+                    : []),
+            ],
+        },
+        {
+            title: "Relevant audit history",
+            rows: auditEvents.length
+                ? auditEvents.map((event) => ({
+                    label: `${event.action} (${dateValue(event.occurredAt)})`,
+                    value: `Actor: ${actorName(event.actor)}`,
+                }))
+                : [{ label: "Events", value: "No relevant audit history is available." }],
+        },
+    ];
+};
+
+module.exports = {
+    createPdfBuffer,
+    sectionsForReport,
+    filtersForReport,
+    filenameForReport,
+    evidenceHistoryReportSections,
+};
