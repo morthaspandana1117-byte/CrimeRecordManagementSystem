@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "report-pdf-integration-test-secret";
 
@@ -91,7 +91,7 @@ const exportRequest = (type, query = "") => request(app)
     .set("Authorization", `Bearer ${tokens.juniorA}`);
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-report-pdf"));
     app = createApp();
 

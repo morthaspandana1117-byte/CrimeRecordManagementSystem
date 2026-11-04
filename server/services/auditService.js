@@ -122,7 +122,9 @@ const log = async ({ actor, action, entityType, entityId, before, after, method,
     }
     try {
         if (!(await module.exports.isTransactionCapableTopology())) {
-            return await AuditLog.create(entry);
+            throw Object.assign(new Error("Hash-chain audit logging requires a transaction-capable MongoDB topology"), {
+                code: "AUDIT_TRANSACTION_REQUIRED",
+            });
         }
         const newSession = await mongoose.startSession();
         try {
