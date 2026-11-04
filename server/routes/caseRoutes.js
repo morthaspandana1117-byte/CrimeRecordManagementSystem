@@ -21,6 +21,7 @@ router.patch("/:id/assign-officers", controller.assignCaseOfficers);
 router.patch("/:id/reopen", requireAuthority({ ranks: SENIOR_OFFICER_RANKS }), controller.reopenCase);
 router.patch("/:id/status", controller.updateCaseStatus);
 router.get("/:id/history", controller.getCaseHistory);
+router.get("/:id/timeline", controller.getCaseTimeline);
 router
     .route("/:id")
     .get(controller.getCaseById)
