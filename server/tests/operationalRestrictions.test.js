@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
 const request = require('supertest');
-const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -111,7 +111,7 @@ const createCaseFixture = async (caseNo = 'CASE-HISTORY-001', assignedOfficerIds
 };
 
 test.before(async () => {
-  mongoServer = await MongoMemoryServer.create();
+  mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
   await mongoose.connect(mongoServer.getUri('crms-operational-tests'));
   app = createApp();
 
@@ -334,27 +334,57 @@ test('evidence custody history is server-controlled and append-only', async () =
   assert.equal(initialHistory.body.data[0].toCustodian.toString(), officers.investigating_officer._id.toString());
 
   const invalidTransfer = await request(app)
-    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .post(`/api/evidence/${evidence._id}/custody/transfers`)
     .set('Authorization', `Bearer ${tokens.investigating_officer}`)
     .send({ toOfficerId: officers.inspector._id, remarks: 'Fake transfer' });
   assert.equal(invalidTransfer.status, 200);
-  assert.equal(invalidTransfer.body.data.previousCustodian.toString(), officers.investigating_officer._id.toString());
-  assert.equal(invalidTransfer.body.data.currentCustodian.toString(), officers.inspector._id.toString());
+  assert.equal(invalidTransfer.body.data.currentCustodian.toString(), officers.investigating_officer._id.toString());
+  assert.ok(invalidTransfer.body.data.pendingTransfer.transferId);
+  const pending = await request(app)
+    .get(`/api/evidence/${evidence._id}/custody/pending`)
+    .set('Authorization', `Bearer ${tokens.inspector}`);
+  assert.equal(pending.status, 200);
+  assert.equal(pending.body.data.toCustodian._id.toString(), officers.inspector._id.toString());
+  assert.equal(pending.body.canAcknowledge, true);
+  const duplicateInitiation = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfers`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`)
+    .send({ toOfficerId: officers.dsp._id });
+  assert.equal(duplicateInitiation.status, 409);
+
+  const senderCannotAcknowledge = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfers/${invalidTransfer.body.data.pendingTransfer.transferId}/acknowledge`)
+    .set('Authorization', `Bearer ${tokens.investigating_officer}`);
+  assert.equal(senderCannotAcknowledge.status, 403);
 
   const actualTransfer = await request(app)
-    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .post(`/api/evidence/${evidence._id}/custody/transfers/${invalidTransfer.body.data.pendingTransfer.transferId}/acknowledge`)
+    .set('Authorization', `Bearer ${tokens.inspector}`)
+    .send();
+  assert.equal(actualTransfer.status, 200);
+  assert.equal(actualTransfer.body.data.previousCustodian.toString(), officers.investigating_officer._id.toString());
+  assert.equal(actualTransfer.body.data.currentCustodian.toString(), officers.inspector._id.toString());
+
+  const nextPending = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfers`)
     .set('Authorization', `Bearer ${tokens.inspector}`)
     .send({ toOfficerId: officers.dsp._id, remarks: 'Forwarded to DSP' });
-  assert.equal(actualTransfer.status, 200);
-  assert.equal(actualTransfer.body.data.previousCustodian.toString(), officers.inspector._id.toString());
-  assert.equal(actualTransfer.body.data.currentCustodian.toString(), officers.dsp._id.toString());
+  assert.equal(nextPending.status, 200);
+  const seniorCannotOverrideReceiver = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfers/${nextPending.body.data.pendingTransfer.transferId}/acknowledge`)
+    .set('Authorization', `Bearer ${tokens.inspector}`);
+  assert.equal(seniorCannotOverrideReceiver.status, 403);
+  const secondAcknowledgement = await request(app)
+    .post(`/api/evidence/${evidence._id}/custody/transfers/${nextPending.body.data.pendingTransfer.transferId}/acknowledge`)
+    .set('Authorization', `Bearer ${tokens.dsp}`);
+  assert.equal(secondAcknowledgement.status, 200);
 
   const historyCount = await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id });
-  assert.equal(historyCount, 3);
+  assert.equal(historyCount, 5);
 
   const spoofedUserId = new mongoose.Types.ObjectId().toString();
   const invalidClientMetadata = await request(app)
-    .post(`/api/evidence/${evidence._id}/custody/transfer`)
+    .post(`/api/evidence/${evidence._id}/custody/transfers`)
     .set('Authorization', `Bearer ${tokens.dsp}`)
     .send({
       toOfficerId: officers.sp._id,
@@ -362,10 +392,9 @@ test('evidence custody history is server-controlled and append-only', async () =
       timestamp: '2099-01-01T00:00:00.000Z',
       remarks: 'Spoofed transfer',
     });
-  assert.equal(invalidClientMetadata.status, 200);
+  assert.equal(invalidClientMetadata.status, 400);
   const latestEntry = await EvidenceCustodyHistory.find({ evidenceId: evidence._id }).sort({ timestamp: -1 }).limit(1).lean();
-  const dspUser = await User.findOne({ username: 'op-dsp' }).lean();
-  assert.equal(latestEntry[0].performedBy.toString(), dspUser._id.toString());
+  assert.equal(latestEntry[0].action, 'TRANSFERRED');
   assert.notEqual(latestEntry[0].performedBy.toString(), spoofedUserId);
 
   const unauthorizedCase = await Evidence.create({
@@ -390,6 +419,7 @@ test('evidence custody history is server-controlled and append-only', async () =
 
   const currentEvidence = await Evidence.findById(evidence._id).lean();
   assert.equal(currentEvidence.currentCustodian.toString(), officers.dsp._id.toString());
+  assert.equal(currentEvidence.pendingCustodyTransfer, undefined);
 });
 
 test('evidence download is authorized and verification is senior-only', async () => {

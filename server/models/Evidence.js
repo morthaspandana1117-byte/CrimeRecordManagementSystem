@@ -55,6 +55,19 @@ const evidenceSchema = new mongoose.Schema(
             index: true,
         },
 
+        pendingCustodyTransfer: {
+            type: new mongoose.Schema({
+                transferId: { type: mongoose.Schema.Types.ObjectId, required: true },
+                fromCustodian: { type: mongoose.Schema.Types.ObjectId, ref: "Officer", required: true },
+                toCustodian: { type: mongoose.Schema.Types.ObjectId, ref: "Officer", required: true },
+                initiatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+                initiatedByOfficer: { type: mongoose.Schema.Types.ObjectId, ref: "Officer", required: true },
+                initiatedAt: { type: Date, required: true },
+                remarks: { type: String, trim: true },
+            }, { _id: false }),
+            default: undefined,
+        },
+
         collectionDate: {
             type: Date,
             required: true,
