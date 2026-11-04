@@ -177,6 +177,292 @@ test.after(async () => {
     await fs.rm(evidenceStorageDirectory, { recursive: true, force: true });
 });
 
+let custodyFixtureSequence = 0;
+const createCustodyFixture = async (suffix) => {
+    const user = await User.create({
+        username: `custody-receiver-${suffix}`,
+        email: `custody-receiver-${suffix}@crms.test`,
+        passwordHash: await bcrypt.hash("Custody@123", 10),
+        role: "officer",
+        status: "approved",
+        isActive: true,
+    });
+    const receiver = await Officer.create({
+        userId: user._id,
+        officerId: `CUSTODY-${suffix}`,
+        badgeNumber: `C${String(++custodyFixtureSequence).padStart(5, "0")}`,
+        name: `Custody Receiver ${suffix}`,
+        rank: "investigating_officer",
+        department: "Criminal Investigation",
+        station: "Transaction Station",
+        phoneNumber: "9876543211",
+        address: "Transaction Test Lane",
+        joiningDate: "2020-01-01",
+        status: "active",
+    });
+    await Case.updateOne({ _id: caseRecord._id }, { $addToSet: { assignedOfficerIds: receiver._id } });
+    const evidence = await Evidence.create({
+        evidenceId: `E-CUSTODY-${suffix}`,
+        caseId: caseRecord._id,
+        investigationRound: 1,
+        type: "Document",
+        description: "Receiver acknowledgement custody test",
+        collectedBy: officer._id,
+        currentCustodian: officer._id,
+        collectionDate: "2026-10-12",
+        location: "Transaction Test Lane",
+        status: "Collected",
+    });
+    const login = await request(app).post("/api/auth/login").send({ username: user.username, password: "Custody@123" });
+    assert.equal(login.status, 200);
+    return { evidence, receiver, receiverToken: login.body.token };
+};
+
+const createAssignedOfficer = async (suffix, rank = "investigating_officer") => {
+    const user = await User.create({
+        username: `custody-race-${suffix}`,
+        email: `custody-race-${suffix}@crms.test`,
+        passwordHash: await bcrypt.hash("Custody@123", 10),
+        role: "officer",
+        status: "approved",
+        isActive: true,
+    });
+    const assignedOfficer = await Officer.create({
+        userId: user._id,
+        officerId: `CUSTODY-RACE-${suffix}`,
+        badgeNumber: `R${String(++custodyFixtureSequence).padStart(5, "0")}`,
+        name: `Custody Race ${suffix}`,
+        rank,
+        department: "Criminal Investigation",
+        station: "Transaction Station",
+        phoneNumber: "9876543213",
+        address: "Transaction Test Lane",
+        joiningDate: "2020-01-01",
+        status: "active",
+    });
+    await Case.updateOne({ _id: caseRecord._id }, { $addToSet: { assignedOfficerIds: assignedOfficer._id } });
+    const login = await request(app).post("/api/auth/login").send({ username: user.username, password: "Custody@123" });
+    assert.equal(login.status, 200);
+    return { officer: assignedOfficer, token: login.body.token };
+};
+
+const changeCustodianAfterInitialRead = (evidenceId, nextCustodianId) => {
+    const originalFindById = Evidence.findById;
+    const originalUpdateOne = Evidence.updateOne;
+    let changed = false;
+    Evidence.findById = function (id, ...args) {
+        const query = originalFindById.call(this, id, ...args);
+        if (changed || String(id) !== String(evidenceId)) return query;
+        changed = true;
+        const originalThen = query.then.bind(query);
+        query.then = (resolve, reject) => originalThen(async (document) => {
+            await originalUpdateOne.call(Evidence, { _id: evidenceId }, { $set: { currentCustodian: nextCustodianId } });
+            return resolve(document);
+        }, reject);
+        return query;
+    };
+    return () => { Evidence.findById = originalFindById; };
+};
+
+test("custody initiation revalidates sender and receiver against transactional evidence state", async () => {
+    const assertNoInitiationWrites = async (evidenceId) => {
+        assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId, action: "TRANSFER_INITIATED" }), 0);
+        assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidenceId, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 0);
+        const saved = await Evidence.findById(evidenceId).lean();
+        assert.equal(saved.pendingCustodyTransfer, undefined);
+    };
+
+    const former = await createCustodyFixture("RACEFORMER");
+    const replacementCustodian = await createAssignedOfficer("RACEFORMER-CURRENT");
+    let restore = changeCustodianAfterInitialRead(former.evidence._id, replacementCustodian.officer._id);
+    try {
+        const response = await request(app).post(`/api/evidence/${former.evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: former.receiver._id });
+        assert.equal(response.status, 403);
+        assert.equal(response.body.error, "CUSTODY_TRANSFER_NOT_ALLOWED");
+        await assertNoInitiationWrites(former.evidence._id);
+        assert.equal((await Evidence.findById(former.evidence._id).lean()).currentCustodian.toString(), replacementCustodian.officer._id.toString());
+    } finally {
+        restore();
+    }
+
+    const senior = await createCustodyFixture("RACESENIOR");
+    const seniorOfficer = await createAssignedOfficer("RACESENIOR-ACTOR", "inspector");
+    const changedCustodian = await createAssignedOfficer("RACESENIOR-CURRENT");
+    restore = changeCustodianAfterInitialRead(senior.evidence._id, changedCustodian.officer._id);
+    try {
+        const response = await request(app).post(`/api/evidence/${senior.evidence._id}/custody/transfers`).set("Authorization", `Bearer ${seniorOfficer.token}`).send({ toOfficerId: senior.receiver._id });
+        assert.equal(response.status, 200);
+        const saved = await Evidence.findById(senior.evidence._id).lean();
+        assert.equal(saved.currentCustodian.toString(), changedCustodian.officer._id.toString());
+        assert.ok(saved.pendingCustodyTransfer);
+        assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: senior.evidence._id, action: "TRANSFER_INITIATED" }), 1);
+        assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: senior.evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 1);
+    } finally {
+        restore();
+    }
+
+    const receiverNowCustodian = await createCustodyFixture("RACERECEIVER");
+    const seniorForRedundantCheck = await createAssignedOfficer("RACERECEIVER-SENIOR", "inspector");
+    restore = changeCustodianAfterInitialRead(receiverNowCustodian.evidence._id, receiverNowCustodian.receiver._id);
+    try {
+        const response = await request(app).post(`/api/evidence/${receiverNowCustodian.evidence._id}/custody/transfers`).set("Authorization", `Bearer ${seniorForRedundantCheck.token}`).send({ toOfficerId: receiverNowCustodian.receiver._id });
+        assert.equal(response.status, 409);
+        assert.equal(response.body.error, "CUSTODY_TRANSFER_REDUNDANT");
+        await assertNoInitiationWrites(receiverNowCustodian.evidence._id);
+        assert.equal((await Evidence.findById(receiverNowCustodian.evidence._id).lean()).currentCustodian.toString(), receiverNowCustodian.receiver._id.toString());
+    } finally {
+        restore();
+    }
+});
+
+test("receiver acknowledgement is identity-bound, concurrent-safe, and audited once per committed transition", async () => {
+    const { evidence, receiver, receiverToken } = await createCustodyFixture("CONCURRENT");
+    const outsiderUser = await User.create({ username: "custody-outsider", email: "custody-outsider@crms.test", passwordHash: await bcrypt.hash("Custody@123", 10), role: "officer", status: "approved", isActive: true });
+    await Officer.create({ userId: outsiderUser._id, officerId: "CUSTODY-OUTSIDER", badgeNumber: "COUT01", name: "Custody Outsider", rank: "investigating_officer", department: "Criminal Investigation", station: "Transaction Station", phoneNumber: "9876543212", address: "Transaction Test Lane", joiningDate: "2020-01-01", status: "active" });
+    const outsiderLogin = await request(app).post("/api/auth/login").send({ username: outsiderUser.username, password: "Custody@123" });
+    assert.equal(outsiderLogin.status, 200);
+    const outsiderInit = await request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${outsiderLogin.body.token}`).send({ toOfficerId: receiver._id });
+    assert.equal(outsiderInit.status, 403);
+    const outsiderPending = await request(app).get(`/api/evidence/${evidence._id}/custody/pending`).set("Authorization", `Bearer ${outsiderLogin.body.token}`);
+    assert.equal(outsiderPending.status, 403);
+    const initiations = await Promise.all([
+        request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: receiver._id, remarks: "Transfer" }),
+        request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: receiver._id, remarks: "Transfer" }),
+    ]);
+    assert.equal(initiations.filter((response) => response.status === 200).length, 1);
+    assert.equal(initiations.filter((response) => response.status === 409).length, 1);
+    const initiation = initiations.find((response) => response.status === 200);
+    const storedPending = await Evidence.findById(evidence._id).lean();
+    assert.equal(storedPending.currentCustodian.toString(), officer._id.toString());
+    assert.equal(storedPending.pendingCustodyTransfer.toCustodian.toString(), receiver._id.toString());
+    assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFER_INITIATED" }), 1);
+
+    const pending = await request(app).get(`/api/evidence/${evidence._id}/custody/pending`).set("Authorization", `Bearer ${token}`);
+    assert.equal(pending.status, 200);
+    assert.equal(pending.body.data.toCustodian._id.toString(), receiver._id.toString());
+    assert.equal(pending.body.data.initiatedAt, initiation.body.data.pendingTransfer.initiatedAt);
+    assert.equal(Object.hasOwn(pending.body.data, "storedFilename"), false);
+
+    const senderAck = await request(app)
+        .post(`/api/evidence/${evidence._id}/custody/transfers/${initiation.body.data.pendingTransfer.transferId}/acknowledge`)
+        .set("Authorization", `Bearer ${token}`);
+    assert.equal(senderAck.status, 403);
+    const outsiderAck = await request(app)
+        .post(`/api/evidence/${evidence._id}/custody/transfers/${initiation.body.data.pendingTransfer.transferId}/acknowledge`)
+        .set("Authorization", `Bearer ${outsiderLogin.body.token}`);
+    assert.equal(outsiderAck.status, 403);
+    const acknowledgements = await Promise.all([
+        request(app).post(`/api/evidence/${evidence._id}/custody/transfers/${initiation.body.data.pendingTransfer.transferId}/acknowledge`).set("Authorization", `Bearer ${receiverToken}`),
+        request(app).post(`/api/evidence/${evidence._id}/custody/transfers/${initiation.body.data.pendingTransfer.transferId}/acknowledge`).set("Authorization", `Bearer ${receiverToken}`),
+    ]);
+    assert.equal(acknowledgements.filter((response) => response.status === 200).length, 1);
+    assert.equal(acknowledgements.filter((response) => response.status === 409).length, 1);
+    const completed = await Evidence.findById(evidence._id).lean();
+    assert.equal(completed.currentCustodian.toString(), receiver._id.toString());
+    assert.equal(completed.pendingCustodyTransfer, undefined);
+    assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFERRED", transferId: initiation.body.data.pendingTransfer.transferId }), 1);
+    assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 1);
+    assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED" }), 1);
+});
+
+test("custody transactions roll back pending state, history, evidence, and audit writes on failures", async () => {
+    const assertCleanInitiationFailure = async (suffix, model, method, failure) => {
+        const { evidence, receiver } = await createCustodyFixture(suffix);
+        const original = model[method];
+        mock.method(model, method, async (...args) => {
+            if (failure(args)) throw new Error(`simulated ${suffix} failure`);
+            return original.apply(model, args);
+        });
+        try {
+            const response = await request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: receiver._id });
+            assert.equal(response.status, 500);
+            const saved = await Evidence.findById(evidence._id).lean();
+            assert.equal(saved.pendingCustodyTransfer, undefined);
+            assert.equal(saved.currentCustodian.toString(), officer._id.toString());
+            assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFER_INITIATED" }), 0);
+            assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 0);
+        } finally {
+            model[method] = original;
+        }
+    };
+    await assertCleanInitiationFailure("HISTORYFAIL", EvidenceCustodyHistory, "create", () => true);
+    await assertCleanInitiationFailure("EVIDENCEFAIL", Evidence, "updateOne", () => true);
+    await assertCleanInitiationFailure("AUDITFAIL", AuditLog, "create", () => true);
+
+    const assertCleanAcknowledgementFailure = async (suffix, model, method) => {
+        const { evidence, receiver, receiverToken } = await createCustodyFixture(suffix);
+        const initiated = await request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: receiver._id });
+        assert.equal(initiated.status, 200);
+        const original = model[method];
+        mock.method(model, method, async () => { throw new Error(`simulated ${suffix} failure`); });
+        try {
+            const response = await request(app)
+                .post(`/api/evidence/${evidence._id}/custody/transfers/${initiated.body.data.pendingTransfer.transferId}/acknowledge`)
+                .set("Authorization", `Bearer ${receiverToken}`);
+            assert.equal(response.status, 500);
+            const saved = await Evidence.findById(evidence._id).lean();
+            assert.equal(saved.currentCustodian.toString(), officer._id.toString());
+            assert.equal(saved.pendingCustodyTransfer.toCustodian.toString(), receiver._id.toString());
+            assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFERRED" }), 0);
+            assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED" }), 0);
+        } finally {
+            model[method] = original;
+        }
+    };
+    await assertCleanAcknowledgementFailure("ACKHISTORYFAIL", EvidenceCustodyHistory, "create");
+    await assertCleanAcknowledgementFailure("ACKEVIDENCEFAIL", Evidence, "updateOne");
+    await assertCleanAcknowledgementFailure("ACKAUDITFAIL", AuditLog, "create");
+});
+
+test("custody endpoints reject client-supplied actor identities and timestamps", async () => {
+    const { evidence, receiver } = await createCustodyFixture("METADATA");
+    for (const field of ["performedBy", "performedByOfficer", "timestamp", "createdAt", "updatedAt"]) {
+        const response = await request(app)
+            .post(`/api/evidence/${evidence._id}/custody/transfers`)
+            .set("Authorization", `Bearer ${token}`)
+            .send({ toOfficerId: receiver._id, [field]: new mongoose.Types.ObjectId().toString() });
+        assert.equal(response.status, 400, field);
+    }
+    assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFER_INITIATED" }), 0);
+    assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 0);
+
+    const initiated = await request(app).post(`/api/evidence/${evidence._id}/custody/transfers`).set("Authorization", `Bearer ${token}`).send({ toOfficerId: receiver._id });
+    assert.equal(initiated.status, 200);
+    const receiverLogin = await request(app).post("/api/auth/login").send({ username: `custody-receiver-METADATA`, password: "Custody@123" });
+    assert.equal(receiverLogin.status, 200);
+    for (const field of ["performedBy", "performedByOfficer", "timestamp", "createdAt", "updatedAt"]) {
+        const response = await request(app)
+            .post(`/api/evidence/${evidence._id}/custody/transfers/${initiated.body.data.pendingTransfer.transferId}/acknowledge`)
+            .set("Authorization", `Bearer ${receiverLogin.body.token}`)
+            .send({ [field]: new mongoose.Types.ObjectId().toString() });
+        assert.equal(response.status, 400, field);
+    }
+    const stillPending = await Evidence.findById(evidence._id).lean();
+    assert.ok(stillPending.pendingCustodyTransfer);
+    assert.equal(stillPending.currentCustodian.toString(), officer._id.toString());
+});
+
+test("custody transitions fail safely without transaction-capable MongoDB topology", async () => {
+    const { evidence, receiver } = await createCustodyFixture("NOTXN");
+    const database = mongoose.connection.db;
+    const originalAdmin = database.admin;
+    database.admin = () => ({ command: async () => ({ ok: 1 }) });
+    try {
+        const initiation = await request(app)
+            .post(`/api/evidence/${evidence._id}/custody/transfers`)
+            .set("Authorization", `Bearer ${token}`)
+            .send({ toOfficerId: receiver._id });
+        assert.equal(initiation.status, 503);
+        assert.equal(initiation.body.error, "CUSTODY_TRANSACTIONS_UNAVAILABLE");
+        const stored = await Evidence.findById(evidence._id).lean();
+        assert.equal(stored.pendingCustodyTransfer, undefined);
+        assert.equal(await EvidenceCustodyHistory.countDocuments({ evidenceId: evidence._id, action: "TRANSFER_INITIATED" }), 0);
+        assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: evidence._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }), 0);
+    } finally {
+        database.admin = originalAdmin;
+    }
+});
+
 test("evidence, custody, case history, and audit writes commit together on a replica set", async () => {
     const response = await upload("E-EVIDENCE-TXN-SUCCESS");
     assert.equal(response.status, 201);
@@ -195,7 +481,7 @@ test("evidence, custody, case history, and audit writes commit together on a rep
     assert.deepEqual(await fs.readFile(path.join(evidenceStorageDirectory, record.storedFilename)), evidenceBytes);
 
     const listed = await request(app)
-        .get(`/api/evidence?caseId=${caseRecord._id}`)
+        .get(`/api/evidence?caseId=${caseRecord._id}&search=E-EVIDENCE-TXN-SUCCESS`)
         .set("Authorization", `Bearer ${token}`);
     assert.equal(listed.status, 200);
     assert.equal(listed.body.data.find((item) => item._id === record._id.toString()).hasFile, true);

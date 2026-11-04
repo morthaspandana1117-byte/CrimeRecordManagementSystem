@@ -57,6 +57,7 @@ const serverControlledEvidenceFields = [
     "createdBy",
     "updatedBy",
     "currentCustodian",
+    "pendingCustodyTransfer",
     "verificationStatus",
     "verifiedBy",
     "verifiedAt",
@@ -119,6 +120,7 @@ const exposeHasFile = (evidence) => {
     const response = typeof evidence.toObject === "function" ? evidence.toObject() : { ...evidence };
     response.hasFile = Boolean(storedFilename);
     delete response.storedFilename;
+    delete response.pendingCustodyTransfer;
     return response;
 };
 
@@ -309,22 +311,6 @@ const ensureEligibleOfficer = async (res, officerId) => {
     }
 
     return { valid: true, officer };
-};
-
-const appendEvidenceCustodyEntry = async ({ evidenceId, caseId, action, fromCustodian, toCustodian, performedBy, performedByOfficer, remarks }) => {
-    if (!evidenceId || !caseId || !action) return null;
-
-    return EvidenceCustodyHistory.create({
-        evidenceId,
-        caseId,
-        action,
-        fromCustodian: fromCustodian || null,
-        toCustodian: toCustodian || null,
-        performedBy,
-        performedByOfficer,
-        remarks: remarks || undefined,
-        timestamp: new Date(),
-    });
 };
 
 const validateEvidence = async (res, body, partial = false) => {
@@ -1206,6 +1192,87 @@ const getEvidenceCustodyHistory = async (req, res) => {
     }
 };
 
+const getPendingEvidenceCustodyTransfer = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        const evidence = await Evidence.findById(req.params.id)
+            .select("caseId currentCustodian collectedBy pendingCustodyTransfer")
+            .populate("pendingCustodyTransfer.fromCustodian", "officerId name rank")
+            .populate("pendingCustodyTransfer.toCustodian", "officerId name rank")
+            .populate("pendingCustodyTransfer.initiatedByOfficer", "officerId name rank");
+        if (!evidence) return notFound(res, "Evidence");
+        const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds");
+        if (!caseRecord) return notFound(res, "Case");
+        if (!canAccessCase(req, caseRecord)) {
+            return res.status(403).json({ success: false, message: "You may only view custody for evidence in assigned cases", error: "CASE_ACCESS_DENIED" });
+        }
+        const pending = evidence.pendingCustodyTransfer;
+        const currentCustodianId = evidence.currentCustodian || evidence.collectedBy;
+        const actorOfficerId = req.authority?.officer?._id;
+        const canInitiate = !!actorOfficerId && (
+            String(currentCustodianId) === String(actorOfficerId) ||
+            ["inspector", "dsp", "sp"].includes(req.authority?.rank)
+        );
+        if (!pending) return res.status(200).json({ success: true, data: null, canInitiate });
+        return res.status(200).json({
+            success: true,
+            canInitiate,
+            canAcknowledge: String(pending.toCustodian?._id || pending.toCustodian) === String(actorOfficerId),
+            data: {
+                transferId: pending.transferId,
+                fromCustodian: pending.fromCustodian,
+                toCustodian: pending.toCustodian,
+                initiatedBy: pending.initiatedByOfficer,
+                initiatedAt: pending.initiatedAt,
+                remarks: pending.remarks,
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Get pending evidence custody transfer error");
+    }
+};
+
+const rejectCustodyMetadata = (req, res) => {
+    const forbidden = ["performedBy", "performedByOfficer", "timestamp", "createdAt", "updatedAt"]
+        .filter((field) => Object.prototype.hasOwnProperty.call(req.body || {}, field));
+    if (!forbidden.length) return false;
+    invalid(res, `Server-controlled custody fields cannot be supplied: ${forbidden.join(", ")}`, "FORBIDDEN_CUSTODY_FIELD");
+    return true;
+};
+
+const runCustodyTransaction = async (operation) => {
+    let session;
+    try {
+        if (!(await isTransactionCapableTopology())) {
+            throw Object.assign(new Error("MongoDB transactions are required for custody transfers"), { code: "MONGO_TRANSACTIONS_UNAVAILABLE" });
+        }
+        session = await mongoose.startSession();
+        let result;
+        await session.withTransaction(async () => {
+            result = await operation(session);
+        });
+        return result;
+    } finally {
+        if (session) await session.endSession();
+    }
+};
+
+const custodyTransactionError = (req, res, error, operation) => {
+    if (["MONGO_TRANSACTIONS_UNAVAILABLE", "MONGO_TOPOLOGY_UNAVAILABLE"].includes(error?.code)) {
+        return res.status(503).json({ success: false, message: "Custody transfer is unavailable because the database does not support transactions", error: "CUSTODY_TRANSACTIONS_UNAVAILABLE" });
+    }
+    if (["CUSTODY_TRANSFER_PENDING", "CUSTODY_TRANSFER_NOT_PENDING", "CUSTODY_STATE_CHANGED"].includes(error?.code)) {
+        return res.status(409).json({ success: false, message: error.message, error: error.code });
+    }
+    if (error?.code === "CUSTODY_TRANSFER_NOT_ALLOWED") {
+        return res.status(403).json({ success: false, message: error.message, error: error.code });
+    }
+    if (error?.code === "CUSTODY_TRANSFER_REDUNDANT") {
+        return res.status(409).json({ success: false, message: error.message, error: error.code });
+    }
+    return handleError(res, error, operation);
+};
+
 const getEvidenceHistory = async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
@@ -1292,18 +1359,19 @@ const getEvidenceHistory = async (req, res) => {
     }
 };
 
-const transferEvidenceCustody = async (req, res) => {
+const initiateEvidenceCustodyTransfer = async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
             return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
         }
+        if (rejectCustodyMetadata(req, res)) return undefined;
 
         const targetOfficerId = req.body?.toOfficerId || req.body?.toCustodian || req.body?.targetOfficerId;
         if (!targetOfficerId || !isValidObjectId(targetOfficerId)) {
             return invalid(res, "A valid target officer is required", "INVALID_TARGET_OFFICER");
         }
 
-        const evidence = await Evidence.findById(req.params.id).select("caseId currentCustodian collectedBy status evidenceId");
+        const evidence = await Evidence.findById(req.params.id).select("caseId currentCustodian collectedBy status evidenceId pendingCustodyTransfer");
         if (!evidence) {
             return notFound(res, "Evidence");
         }
@@ -1386,63 +1454,174 @@ const transferEvidenceCustody = async (req, res) => {
             });
         }
 
-        const hasClientMetadataTampering =
-            Object.prototype.hasOwnProperty.call(req.body, "performedBy") ||
-            Object.prototype.hasOwnProperty.call(req.body, "performedByOfficer") ||
-            Object.prototype.hasOwnProperty.call(req.body, "timestamp") ||
-            Object.prototype.hasOwnProperty.call(req.body, "createdAt") ||
-            Object.prototype.hasOwnProperty.call(req.body, "updatedAt");
-
-        const event = await appendEvidenceCustodyEntry({
-            evidenceId: evidence._id,
-            caseId: evidence.caseId,
-            action: "TRANSFERRED",
-            fromCustodian: currentCustodianId,
-            toCustodian: targetOfficer._id,
-            performedBy: req.user?.userId,
-            performedByOfficer: actorOfficerId,
-            remarks: typeof req.body?.remarks === "string" ? req.body.remarks.trim() : undefined,
+        const transferId = new mongoose.Types.ObjectId();
+        const initiatedAt = new Date();
+        const remarks = typeof req.body?.remarks === "string" ? req.body.remarks.trim() : undefined;
+        const transfer = await runCustodyTransaction(async (session) => {
+            const freshQuery = Evidence.findById(evidence._id).select("caseId currentCustodian collectedBy pendingCustodyTransfer").session(session);
+            const fresh = await freshQuery;
+            if (!fresh) throw Object.assign(new Error("Evidence not found"), { code: "CUSTODY_STATE_CHANGED" });
+            const freshCustodianId = fresh.currentCustodian || fresh.collectedBy;
+            const senderStillAuthorized = String(freshCustodianId) === String(actorOfficerId) || isSeniorOfficer;
+            if (!senderStillAuthorized) {
+                throw Object.assign(new Error("Only the current custodian or a senior officer may transfer evidence"), { code: "CUSTODY_TRANSFER_NOT_ALLOWED" });
+            }
+            if (String(targetOfficer._id) === String(freshCustodianId)) {
+                throw Object.assign(new Error("Evidence is already under the target custodian"), { code: "CUSTODY_TRANSFER_REDUNDANT" });
+            }
+            const txCase = await Case.findById(fresh.caseId).select("assignedOfficerIds status").session(session);
+            const txTarget = await Officer.findById(targetOfficer._id).populate("userId", "status isActive role").session(session);
+            if (!txCase || !canAccessCase(req, txCase) || txCase.status === "Closed" || !txTarget || txTarget.status !== "active" || !txTarget.userId?.isActive || !txCase.assignedOfficerIds?.some((officerId) => String(officerId) === String(txTarget._id))) {
+                throw Object.assign(new Error("Case access or receiver eligibility changed before transfer initiation"), { code: "CUSTODY_STATE_CHANGED" });
+            }
+            const fromCustodian = freshCustodianId;
+            const pendingCustodyTransfer = {
+                transferId,
+                fromCustodian,
+                toCustodian: targetOfficer._id,
+                initiatedBy: req.authority?.user?._id || req.user?.userId,
+                initiatedByOfficer: actorOfficerId,
+                initiatedAt,
+                ...(remarks ? { remarks } : {}),
+            };
+            const currentCustodianFilter = fresh.currentCustodian
+                ? { currentCustodian: fresh.currentCustodian }
+                : { $or: [{ currentCustodian: { $exists: false } }, { currentCustodian: null }], collectedBy: fresh.collectedBy };
+            const updated = await Evidence.updateOne({
+                _id: fresh._id,
+                ...currentCustodianFilter,
+                pendingCustodyTransfer: { $exists: false },
+            }, { $set: { pendingCustodyTransfer } }, { session });
+            if (updated.modifiedCount !== 1) {
+                throw Object.assign(new Error("A custody transfer is already pending or the evidence custodian changed"), { code: "CUSTODY_TRANSFER_PENDING" });
+            }
+            const [historyEntry] = await EvidenceCustodyHistory.create([{
+                evidenceId: fresh._id,
+                caseId: fresh.caseId,
+                action: "TRANSFER_INITIATED",
+                fromCustodian,
+                toCustodian: targetOfficer._id,
+                performedBy: pendingCustodyTransfer.initiatedBy,
+                performedByOfficer: actorOfficerId,
+                transferId,
+                remarks,
+                timestamp: initiatedAt,
+            }], { session });
+            await auditService.log({
+                actor: pendingCustodyTransfer.initiatedBy,
+                action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED",
+                entityType: "Evidence",
+                entityId: fresh._id,
+                before: { currentCustodian: fromCustodian, caseId: fresh.caseId },
+                after: { currentCustodian: fromCustodian, caseId: fresh.caseId, pendingTransferId: transferId, pendingToCustodian: targetOfficer._id },
+                method: req.method,
+                path: `${req.baseUrl}${req.path}`,
+                session,
+            });
+            return { historyEntry, pendingCustodyTransfer };
         });
-
-        if (!event) {
-            return res.status(500).json({
-                success: false,
-                message: "Failed to create custody history",
-                error: "CUSTODY_HISTORY_CREATE_FAILED",
-            });
-        }
-
-        if (hasClientMetadataTampering) {
-            return res.status(200).json({
-                success: true,
-                message: "Evidence custody metadata was sanitized and the transfer was not applied",
-                data: {
-                    evidenceId: evidence._id,
-                    previousCustodian: currentCustodianId,
-                    currentCustodian: currentCustodianId,
-                    event,
-                },
-            });
-        }
-
-        evidence.currentCustodian = targetOfficer._id;
-        evidence.updatedBy = req.user?.userId;
-        await evidence.save();
 
         return res.status(200).json({
             success: true,
-            message: "Evidence custody transferred successfully",
+            message: "Evidence custody transfer is pending receiver acknowledgement",
             data: {
                 evidenceId: evidence._id,
-                previousCustodian: currentCustodianId,
-                currentCustodian: targetOfficer._id,
-                event,
+                currentCustodian: currentCustodianId,
+                pendingTransfer: {
+                    transferId,
+                    fromCustodian: transfer.pendingCustodyTransfer.fromCustodian,
+                    toCustodian: transfer.pendingCustodyTransfer.toCustodian,
+                    initiatedBy: transfer.pendingCustodyTransfer.initiatedByOfficer,
+                    initiatedAt,
+                    ...(remarks ? { remarks } : {}),
+                },
             },
         });
     } catch (error) {
-        return handleError(res, error, "Transfer evidence custody error");
+        return custodyTransactionError(req, res, error, "Initiate evidence custody transfer error");
     }
 };
+
+const acknowledgeEvidenceCustodyTransfer = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+        if (!isValidObjectId(req.params.transferId)) return invalid(res, "Invalid transfer ID", "INVALID_TRANSFER_ID");
+        if (rejectCustodyMetadata(req, res)) return undefined;
+        const actorOfficerId = req.authority?.officer?._id;
+        if (!actorOfficerId) return res.status(403).json({ success: false, message: "A valid authenticated officer is required", error: "OFFICER_REQUIRED" });
+        const acknowledgedAt = new Date();
+        const transferId = new mongoose.Types.ObjectId(req.params.transferId);
+        const completed = await runCustodyTransaction(async (session) => {
+            const evidence = await Evidence.findById(req.params.id)
+                .select("caseId currentCustodian pendingCustodyTransfer")
+                .session(session);
+            if (!evidence) throw Object.assign(new Error("Evidence not found"), { code: "CUSTODY_STATE_CHANGED" });
+            const caseRecord = await Case.findById(evidence.caseId).select("assignedOfficerIds").session(session);
+            if (!caseRecord) throw Object.assign(new Error("Case not found"), { code: "CUSTODY_STATE_CHANGED" });
+            if (!canAccessCase(req, caseRecord)) {
+                throw Object.assign(new Error("You may only acknowledge transfers for evidence in accessible cases"), { code: "CASE_ACCESS_DENIED" });
+            }
+            const pending = evidence.pendingCustodyTransfer;
+            if (!pending || String(pending.transferId) !== String(transferId)) {
+                throw Object.assign(new Error("This custody transfer is no longer pending"), { code: "CUSTODY_TRANSFER_NOT_PENDING" });
+            }
+            if (String(pending.toCustodian) !== String(actorOfficerId)) {
+                throw Object.assign(new Error("Only the designated receiving officer may acknowledge receipt"), { code: "CUSTODY_RECEIVER_REQUIRED" });
+            }
+            const updated = await Evidence.updateOne({
+                _id: evidence._id,
+                "pendingCustodyTransfer.transferId": transferId,
+                "pendingCustodyTransfer.toCustodian": actorOfficerId,
+            }, {
+                $set: { currentCustodian: actorOfficerId, updatedBy: req.authority?.user?._id || req.user?.userId },
+                $unset: { pendingCustodyTransfer: 1 },
+            }, { session });
+            if (updated.modifiedCount !== 1) {
+                throw Object.assign(new Error("This custody transfer was already acknowledged or changed"), { code: "CUSTODY_TRANSFER_NOT_PENDING" });
+            }
+            const [historyEntry] = await EvidenceCustodyHistory.create([{
+                evidenceId: evidence._id,
+                caseId: evidence.caseId,
+                action: "TRANSFERRED",
+                fromCustodian: pending.fromCustodian,
+                toCustodian: pending.toCustodian,
+                performedBy: req.authority?.user?._id || req.user?.userId,
+                performedByOfficer: actorOfficerId,
+                transferId,
+                remarks: pending.remarks,
+                timestamp: acknowledgedAt,
+            }], { session });
+            await auditService.log({
+                actor: req.authority?.user?._id || req.user?.userId,
+                action: "EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED",
+                entityType: "Evidence",
+                entityId: evidence._id,
+                before: { currentCustodian: pending.fromCustodian, caseId: evidence.caseId, pendingTransferId: transferId, pendingToCustodian: pending.toCustodian },
+                after: { currentCustodian: actorOfficerId, caseId: evidence.caseId },
+                method: req.method,
+                path: `${req.baseUrl}${req.path}`,
+                session,
+            });
+            return { historyEntry, fromCustodian: pending.fromCustodian };
+        });
+        return res.status(200).json({
+            success: true,
+            message: "Evidence receipt acknowledged and custody transferred",
+            data: { evidenceId: req.params.id, previousCustodian: completed.fromCustodian, currentCustodian: actorOfficerId, event: completed.historyEntry },
+        });
+    } catch (error) {
+        if (error?.code === "CUSTODY_RECEIVER_REQUIRED") {
+            return res.status(403).json({ success: false, message: error.message, error: error.code });
+        }
+        if (error?.code === "CASE_ACCESS_DENIED") {
+            return res.status(403).json({ success: false, message: error.message, error: error.code });
+        }
+        return custodyTransactionError(req, res, error, "Acknowledge evidence custody transfer error");
+    }
+};
+
+// Retain the legacy path as an initiation alias; it must not bypass receiver acknowledgement.
+const transferEvidenceCustody = initiateEvidenceCustodyTransfer;
 
 const verifyEvidence = async (req, res) => {
     try {
@@ -1525,8 +1704,11 @@ module.exports = {
     checkEvidenceIntegrity,
     verifyEvidence,
     getEvidenceCustodyHistory,
+    getPendingEvidenceCustodyTransfer,
     getEvidenceHistory,
     transferEvidenceCustody,
+    initiateEvidenceCustodyTransfer,
+    acknowledgeEvidenceCustodyTransfer,
     normalizeEvidenceStatus,
     validateEvidenceStatus,
     normalizeEvidenceType,

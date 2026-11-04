@@ -37,6 +37,8 @@ export function evidenceHistoryDescription(event) {
     }
     case 'EVIDENCE_VERIFIED': return 'Evidence verified'
     case 'EVIDENCE_REJECTED': return 'Evidence rejected'
+    case 'EVIDENCE_CUSTODY_TRANSFER_INITIATED': return 'Evidence custody transfer initiated'
+    case 'EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED': return 'Evidence custody transfer acknowledged'
     case 'EVIDENCE_INTEGRITY_CHECKED': {
       const result = integrityOutcomeDescription[event.details?.integrityResult]
       return result ? `Evidence integrity checked — ${result}` : 'Evidence integrity checked'

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
-import { checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, getEvidenceHistory, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
 import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
@@ -24,6 +24,12 @@ function CaseDetails() {
   const [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
+  const [custodyStates, setCustodyStates] = useState({})
+  const [custodyHistories, setCustodyHistories] = useState({})
+  const [custodyLoadingIds, setCustodyLoadingIds] = useState([])
+  const [custodyErrors, setCustodyErrors] = useState({})
+  const [custodyInputs, setCustodyInputs] = useState({})
+  const [custodyActionIds, setCustodyActionIds] = useState([])
   const [caseHistoryError, setCaseHistoryError] = useState('')
   const [reopening, setReopening] = useState(false)
   const [showReopenDialog, setShowReopenDialog] = useState(false)
@@ -43,6 +49,30 @@ function CaseDetails() {
   const evidenceHistorySelection = useRef('')
   const evidenceHistoryRequests = useRef(new Set())
 
+  const loadCustodyState = useCallback(async (evidenceId) => {
+    setCustodyLoadingIds((current) => current.includes(evidenceId) ? current : [...current, evidenceId])
+    setCustodyErrors((current) => ({ ...current, [evidenceId]: '' }))
+    try {
+      const [pendingResponse, historyResponse] = await Promise.all([
+        getPendingEvidenceCustodyTransfer(evidenceId),
+        getEvidenceCustodyHistory(evidenceId),
+      ])
+      setCustodyStates((current) => ({
+        ...current,
+        [evidenceId]: {
+          pending: pendingResponse.data?.data || null,
+          canInitiate: Boolean(pendingResponse.data?.canInitiate),
+          canAcknowledge: Boolean(pendingResponse.data?.canAcknowledge),
+        },
+      }))
+      setCustodyHistories((current) => ({ ...current, [evidenceId]: Array.isArray(historyResponse.data?.data) ? historyResponse.data.data : [] }))
+    } catch (requestError) {
+      setCustodyErrors((current) => ({ ...current, [evidenceId]: message(requestError, 'Custody details could not be loaded.') }))
+    } finally {
+      setCustodyLoadingIds((current) => current.filter((value) => value !== evidenceId))
+    }
+  }, [])
+
   const load = useCallback(async ({ showLoading = true } = {}) => {
     try {
       if (showLoading) setLoading(true)
@@ -52,7 +82,9 @@ function CaseDetails() {
       setRecord(caseResponse.data?.data || null)
       try {
         const evidenceResponse = await getEvidence({ caseId: id })
-        setEvidence(evidenceItemsFromResponse(evidenceResponse))
+        const records = evidenceItemsFromResponse(evidenceResponse)
+        setEvidence(records)
+        await Promise.all(records.map((item) => loadCustodyState(String(item._id))))
       } catch (requestError) {
         setEvidence([])
         setEvidenceError(message(requestError, 'Related evidence could not be loaded.'))
@@ -69,7 +101,7 @@ function CaseDetails() {
     } finally {
       if (showLoading) setLoading(false)
     }
-  }, [id])
+  }, [id, loadCustodyState])
 
   const openReopenDialog = () => {
     setReopenReason('')
@@ -139,6 +171,45 @@ function CaseDetails() {
     } catch {
       setEvidenceError('This evidence file could not be downloaded. It may be missing or you may not have access.')
     }
+  }
+
+  const handleInitiateCustodyTransfer = async (item, event) => {
+    event.preventDefault()
+    const input = custodyInputs[item._id] || {}
+    if (!input.toOfficerId || custodyActionIds.includes(item._id)) return
+    setCustodyActionIds((current) => [...current, item._id])
+    setCustodyErrors((current) => ({ ...current, [item._id]: '' }))
+    try {
+      await initiateEvidenceCustodyTransfer(item._id, { toOfficerId: input.toOfficerId, remarks: input.remarks || '' })
+      setNotice('Custody transfer initiated. The current custodian remains unchanged until receipt is acknowledged.')
+      setCustodyInputs((current) => ({ ...current, [item._id]: { toOfficerId: '', remarks: '' } }))
+      await load({ showLoading: false })
+    } catch (requestError) {
+      setCustodyErrors((current) => ({ ...current, [item._id]: message(requestError, 'Custody transfer could not be initiated.') }))
+    } finally {
+      setCustodyActionIds((current) => current.filter((value) => value !== item._id))
+    }
+  }
+
+  const handleAcknowledgeCustodyTransfer = async (item, transferId) => {
+    if (custodyActionIds.includes(item._id)) return
+    setCustodyActionIds((current) => [...current, item._id])
+    setCustodyErrors((current) => ({ ...current, [item._id]: '' }))
+    try {
+      await acknowledgeEvidenceCustodyTransfer(item._id, transferId)
+      setNotice('Receipt acknowledged. Evidence custody has been updated.')
+      await load({ showLoading: false })
+    } catch (requestError) {
+      setCustodyErrors((current) => ({ ...current, [item._id]: message(requestError, 'Receipt could not be acknowledged.') }))
+    } finally {
+      setCustodyActionIds((current) => current.filter((value) => value !== item._id))
+    }
+  }
+
+  const officerName = (value) => {
+    const officerId = String(value?._id || value || '')
+    const assigned = record?.assignedOfficerIds?.find((officer) => String(officer?._id || officer) === officerId)
+    return value?.name || assigned?.name || value?.officerId || assigned?.officerId || officerId || 'Unknown officer'
   }
 
   const handleIntegrityCheck = async (item) => {
@@ -313,6 +384,39 @@ function CaseDetails() {
                   </div>
                   <div>{displayValue(item.description)}</div>
                   <div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)} · Verification: {item.verificationStatus || 'unverified'}</div>
+                  <div className="small mt-1" data-testid={`current-custodian-${item._id}`}>Current custodian: {officerName(item.currentCustodian || item.collectedBy)}</div>
+                  <section className="border rounded p-3 mt-3" aria-label={`Custody for evidence ${item.evidenceId}`}>
+                    <h4 className="h6">Chain of custody</h4>
+                    {custodyLoadingIds.includes(String(item._id)) && <p role="status">Loading custody details...</p>}
+                    {custodyErrors[item._id] && <div className="alert alert-warning" role="alert">{custodyErrors[item._id]}<button className="btn btn-sm btn-link" disabled={custodyLoadingIds.includes(String(item._id))} onClick={() => loadCustodyState(String(item._id))} type="button">Retry</button></div>}
+                    {!custodyLoadingIds.includes(String(item._id)) && !custodyErrors[item._id] && !custodyStates[item._id]?.pending && <p className="mb-2">No pending custody transfer.</p>}
+                    {custodyStates[item._id]?.pending && (
+                      <div className="border rounded p-2 mb-3" data-testid={`pending-transfer-${item._id}`}>
+                        <strong>Receipt pending</strong>
+                        <div className="small">Sender: {officerName(custodyStates[item._id].pending.initiatedBy)}</div>
+                        <div className="small">From custodian: {officerName(custodyStates[item._id].pending.fromCustodian)}</div>
+                        <div className="small">Designated receiver: {officerName(custodyStates[item._id].pending.toCustodian)}</div>
+                        <div className="small">Initiated: {dateTime(custodyStates[item._id].pending.initiatedAt)}</div>
+                        {custodyStates[item._id].pending.remarks && <div className="small">Remarks: {custodyStates[item._id].pending.remarks}</div>}
+                        {custodyStates[item._id].canAcknowledge && <button className="btn btn-sm btn-success mt-2" disabled={custodyActionIds.includes(item._id)} onClick={() => handleAcknowledgeCustodyTransfer(item, custodyStates[item._id].pending.transferId)} type="button">{custodyActionIds.includes(item._id) ? 'Acknowledging...' : 'Acknowledge receipt'}</button>}
+                      </div>
+                    )}
+                    {!custodyLoadingIds.includes(String(item._id)) && !custodyErrors[item._id] && custodyStates[item._id]?.canInitiate && !custodyStates[item._id]?.pending && record.status !== 'Closed' && (
+                      <form className="border rounded p-2 mb-3" onSubmit={(event) => handleInitiateCustodyTransfer(item, event)}>
+                        <h5 className="h6">Initiate transfer</h5>
+                        <label className="form-label" htmlFor={`custody-receiver-${item._id}`}>Receiving officer</label>
+                        <select className="form-select mb-2" id={`custody-receiver-${item._id}`} onChange={(event) => setCustodyInputs((current) => ({ ...current, [item._id]: { ...current[item._id], toOfficerId: event.target.value } }))} required value={custodyInputs[item._id]?.toOfficerId || ''}>
+                          <option value="">Select an assigned active officer</option>
+                          {(record.assignedOfficerIds || []).filter((officer) => officer.status === 'active' && String(officer._id) !== String(item.currentCustodian?._id || item.currentCustodian || item.collectedBy?._id || item.collectedBy)).map((officer) => <option key={officer._id} value={officer._id}>{officer.name} ({officer.rank})</option>)}
+                        </select>
+                        <label className="form-label" htmlFor={`custody-remarks-${item._id}`}>Remarks (optional)</label>
+                        <textarea className="form-control mb-2" id={`custody-remarks-${item._id}`} onChange={(event) => setCustodyInputs((current) => ({ ...current, [item._id]: { ...current[item._id], remarks: event.target.value } }))} rows="2" value={custodyInputs[item._id]?.remarks || ''} />
+                        <button className="btn btn-sm btn-outline-primary" disabled={custodyActionIds.includes(item._id)} type="submit">{custodyActionIds.includes(item._id) ? 'Submitting...' : 'Send for acknowledgement'}</button>
+                      </form>
+                    )}
+                    {!custodyLoadingIds.includes(String(item._id)) && !custodyErrors[item._id] && !custodyHistories[item._id]?.length && <p className="small text-secondary mb-0">No custody events recorded.</p>}
+                    {custodyHistories[item._id]?.length > 0 && <ol className="list-unstyled mb-0">{custodyHistories[item._id].map((event) => <li className="border-bottom py-2" key={event._id}><strong>{event.action === 'TRANSFER_INITIATED' ? 'Transfer initiated' : event.action === 'TRANSFERRED' ? 'Transfer acknowledged' : event.action}</strong><div className="small text-secondary">{event.fromCustodian ? `${officerName(event.fromCustodian)} → ` : ''}{officerName(event.toCustodian)} · {dateTime(event.timestamp)}</div>{event.remarks && <div className="small">{event.remarks}</div>}</li>)}</ol>}
+                  </section>
                   {integrityResults[item._id]?.result && <div className="small mt-1" role="status">{integrityResultLabel(integrityResults[item._id].result)}</div>}
                   {integrityResults[item._id]?.error && <div className="small text-danger mt-1" role="alert">{integrityResults[item._id].error}</div>}
                   {evidenceHistoryId === String(item._id) && (

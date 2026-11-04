@@ -84,6 +84,8 @@ test('evidence history events use readable labels for existing audit actions', (
   assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_FILE_DOWNLOAD_FAILED', details: { downloadOutcome: 'stream_interrupted' } }), 'Evidence download failed — transfer interrupted')
   assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_VERIFIED' }), 'Evidence verified')
   assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_REJECTED' }), 'Evidence rejected')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_CUSTODY_TRANSFER_INITIATED' }), 'Evidence custody transfer initiated')
+  assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED' }), 'Evidence custody transfer acknowledged')
   assert.equal(evidenceHistoryDescription({ action: 'EVIDENCE_INTEGRITY_CHECKED', details: { integrityResult: 'missing' } }), 'Evidence integrity checked — Missing')
 })
 

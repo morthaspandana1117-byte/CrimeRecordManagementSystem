@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "audit-integration-test-secret";
 
@@ -25,7 +25,7 @@ let officerUserId;
 let officer;
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri("crms-audit");
     if (!mongoUri.startsWith("mongodb://127.0.0.1") && !mongoUri.startsWith("mongodb://localhost")) {
         throw new Error("Audit test did not receive an isolated MongoDB URI");
@@ -198,19 +198,35 @@ test("custody transfer audit records a distinct action and safe custodian transi
     assert.equal(created.status, 201);
 
     const transfer = await request(app)
-        .post(`/api/evidence/${created.body.data._id}/custody/transfer`)
+        .post(`/api/evidence/${created.body.data._id}/custody/transfers`)
         .set("Authorization", `Bearer ${officerToken}`)
         .send({ toOfficerId: targetOfficer._id.toString(), remarks: "Transfer for audit test" });
     assert.equal(transfer.status, 200);
 
-    const event = await AuditLog.findOne({ entityType: "Evidence", entityId: created.body.data._id, action: "EVIDENCE_CUSTODY_TRANSFERRED" }).lean();
-    assert.ok(event);
-    assert.equal(event.actor.toString(), officerUserId);
-    assert.equal(event.changes.before.currentCustodian, officer._id.toString());
-    assert.equal(event.changes.after.currentCustodian, targetOfficer._id.toString());
+    const initiationEvent = await AuditLog.findOne({ entityType: "Evidence", entityId: created.body.data._id, action: "EVIDENCE_CUSTODY_TRANSFER_INITIATED" }).lean();
+    assert.ok(initiationEvent);
+    assert.equal(initiationEvent.actor.toString(), officerUserId);
+    assert.equal(initiationEvent.changes.before.currentCustodian, officer._id.toString());
+    assert.equal(initiationEvent.changes.after.currentCustodian, officer._id.toString());
+    assert.equal(initiationEvent.changes.after.pendingToCustodian, targetOfficer._id.toString());
     assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: created.body.data._id, action: "EVIDENCE_CREATED" }), 1);
 
-    const custodyTransfer = await EvidenceCustodyHistory.findOne({ evidenceId: created.body.data._id, action: "TRANSFERRED" }).lean();
-    assert.ok(custodyTransfer);
-    assert.equal(custodyTransfer.toCustodian.toString(), targetOfficer._id.toString());
+    const pendingEvent = await EvidenceCustodyHistory.findOne({ evidenceId: created.body.data._id, action: "TRANSFER_INITIATED" }).lean();
+    assert.ok(pendingEvent);
+    assert.equal(pendingEvent.toCustodian.toString(), targetOfficer._id.toString());
+    const targetLogin = await request(app).post("/api/auth/login").send({ username: "audit-custody-target", password: "Audit@123" });
+    assert.equal(targetLogin.status, 200);
+    const acknowledgement = await request(app)
+        .post(`/api/evidence/${created.body.data._id}/custody/transfers/${transfer.body.data.pendingTransfer.transferId}/acknowledge`)
+        .set("Authorization", `Bearer ${targetLogin.body.token}`);
+    assert.equal(acknowledgement.status, 200);
+    const completionEvent = await AuditLog.findOne({ entityType: "Evidence", entityId: created.body.data._id, action: "EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED" }).lean();
+    assert.ok(completionEvent);
+    assert.equal(completionEvent.actor.toString(), targetUser._id.toString());
+    assert.equal(completionEvent.changes.before.currentCustodian, officer._id.toString());
+    assert.equal(completionEvent.changes.after.currentCustodian, targetOfficer._id.toString());
+    const completedEntry = await EvidenceCustodyHistory.findOne({ evidenceId: created.body.data._id, action: "TRANSFERRED" }).lean();
+    assert.ok(completedEntry);
+    assert.equal(completedEntry.transferId.toString(), pendingEvent.transferId.toString());
+    assert.equal(await AuditLog.countDocuments({ entityType: "Evidence", entityId: created.body.data._id, action: { $in: ["EVIDENCE_CUSTODY_TRANSFER_INITIATED", "EVIDENCE_CUSTODY_TRANSFER_ACKNOWLEDGED"] } }), 2);
 });

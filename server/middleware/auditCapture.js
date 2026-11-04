@@ -42,6 +42,8 @@ const actionFor = (method, path, entityType, body) => {
 const auditCapture = async (req, res, next) => {
     // Integrity checks write their outcome audit explicitly after the hash result is known.
     if (req.method.toUpperCase() === "POST" && /\/integrity-check\/?$/.test(req.path)) return next();
+    // Custody transfer events are committed explicitly with the custody transaction.
+    if (req.method.toUpperCase() === "POST" && /\/custody\/(?:transfer|transfers)(?:\/[^/]+\/acknowledge)?\/?$/.test(req.path)) return next();
     const resourceName = req.baseUrl.split("/").filter(Boolean).at(-1);
     const resource = RESOURCE_MODELS[resourceName];
     const method = req.method.toUpperCase();

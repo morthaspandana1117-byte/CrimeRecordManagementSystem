@@ -20,7 +20,7 @@ const evidenceCustodyHistorySchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true,
-            enum: ["COLLECTED", "TRANSFERRED", "RECEIVED", "SUBMITTED", "RELEASED", "RETURNED"],
+            enum: ["COLLECTED", "TRANSFER_INITIATED", "TRANSFERRED", "RECEIVED", "SUBMITTED", "RELEASED", "RETURNED"],
             index: true,
         },
 
@@ -34,6 +34,11 @@ const evidenceCustodyHistorySchema = new mongoose.Schema(
             type: mongoose.Schema.Types.ObjectId,
             ref: "Officer",
             default: null,
+        },
+
+        transferId: {
+            type: mongoose.Schema.Types.ObjectId,
+            index: true,
         },
 
         performedBy: {

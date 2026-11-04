@@ -15,7 +15,11 @@ router.use(auditCapture);
 
 router.route("/").post(controller.createEvidence).get(controller.getAllEvidence);
 router.get("/:id/history", controller.getEvidenceHistory);
+router.get("/:id/custody/pending", controller.getPendingEvidenceCustodyTransfer);
 router.get("/:id/custody", controller.getEvidenceCustodyHistory);
+router.post("/:id/custody/transfers", controller.initiateEvidenceCustodyTransfer);
+router.post("/:id/custody/transfers/:transferId/acknowledge", controller.acknowledgeEvidenceCustodyTransfer);
+// Legacy path remains an initiation alias and cannot complete a handoff by itself.
 router.post("/:id/custody/transfer", controller.transferEvidenceCustody);
 router.patch("/:id/status", controller.updateEvidenceStatus);
 router.patch("/:id/verify", requireAuthority({ ranks: ["inspector", "dsp", "sp"] }), controller.verifyEvidence);
