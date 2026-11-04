@@ -168,14 +168,14 @@ test("authentication returns a separate server-resolved management rank", async 
         .post("/api/auth/login")
         .send({ username: users.si.username, password: "Management@123" });
     assert.equal(login.status, 200);
-    assert.equal(login.body.user.rank, "investigating_officer");
+    assert.equal(login.body.user.rank, "si");
     assert.equal(login.body.user.managementRank, "si");
 
     const currentUser = await request(app)
         .get("/api/auth/me")
         .set("Authorization", `Bearer ${login.body.token}`);
     assert.equal(currentUser.status, 200);
-    assert.equal(currentUser.body.data.rank, "investigating_officer");
+    assert.equal(currentUser.body.data.rank, "si");
     assert.equal(currentUser.body.data.managementRank, "si");
 });
 

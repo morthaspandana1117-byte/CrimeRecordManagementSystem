@@ -4,11 +4,12 @@ const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
 const Evidence = require("../models/Evidence");
+const { isSeniorOfficerRank } = require("../middleware/authority");
 const Report = require("../models/Report");
 
 const getOfficerDashboardStats = async (req, res) => {
     try {
-        const isInvestigatingOfficer = req.authority?.rank === "investigating_officer";
+        const isInvestigatingOfficer = !isSeniorOfficerRank(req.authority?.rank);
         const officerId = req.authority?.officer?._id;
         const firFilter = isInvestigatingOfficer ? { registeredBy: officerId } : {};
         const caseFilter = isInvestigatingOfficer

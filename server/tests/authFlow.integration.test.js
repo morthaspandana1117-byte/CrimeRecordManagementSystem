@@ -246,7 +246,7 @@ test("registered officers stay locked out until an admin approves them, then gai
     const approvedLogin = await login("flow-officer", payload.batchNumber);
     assert.equal(approvedLogin.status, 200);
     assert.equal(approvedLogin.body.user.systemRole, "officer");
-    assert.equal(approvedLogin.body.user.rank, "investigating_officer");
+    assert.equal(approvedLogin.body.user.rank, "si");
 
     const me = await request(app).get("/api/auth/me").set("Authorization", `Bearer ${approvedLogin.body.token}`);
     assert.equal(me.status, 200);

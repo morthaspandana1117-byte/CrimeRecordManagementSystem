@@ -10,6 +10,9 @@ const {
     validateReference,
     handleError,
 } = require("./controllerUtils");
+const {
+    canAccessAssignedRecord,
+} = require("../middleware/authority");
 const fields = [
     "reportId",
     "caseId",
@@ -127,7 +130,7 @@ const createReport = async (req, res) => {
 
         const result = await validate(res, payload);
         if (result !== "OK") return result ? invalid(res, result) : undefined;
-        if (req.authority?.rank === "investigating_officer") {
+        if (!canAccessAssignedRecord(req.authority, (await Case.findById(payload.caseId).select("assignedOfficerIds"))?.assignedOfficerIds)) {
             const assignedCase = await findCaseAssignedToOfficer(payload.caseId, req.authority.officer._id);
             if (!assignedCase) return denyCaseAccess(res, "create");
         }
@@ -220,7 +223,13 @@ const updateReport = async (req, res) => {
         }
         const result = await validate(res, updates, true);
         if (result !== "OK") return result ? invalid(res, result) : undefined;
-        if (req.authority?.rank === "investigating_officer" && updates.caseId !== undefined) {
+        if (
+            updates.caseId !== undefined &&
+            !canAccessAssignedRecord(
+                req.authority,
+                (await Case.findById(updates.caseId).select("assignedOfficerIds"))?.assignedOfficerIds,
+            )
+        ) {
             const assignedCase = await findCaseAssignedToOfficer(updates.caseId, req.authority.officer._id);
             if (!assignedCase) return denyCaseAccess(res, "update");
         }

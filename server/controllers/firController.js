@@ -11,6 +11,10 @@ const {
     validateReferences,
     handleError,
 } = require("./controllerUtils");
+const {
+    canAccessAssignedRecord,
+    isSeniorOfficerRank,
+} = require("../middleware/authority");
 
 const validStatuses = [
     "Open",
@@ -74,8 +78,7 @@ const normalizeFIRStatus = (value) => {
 const validateFIRStatus = (value) => normalizeFIRStatus(value) !== null;
 
 const canAccessFIR = (req, fir) =>
-    req.authority?.rank !== "investigating_officer" ||
-    String(fir?.registeredBy?._id || fir?.registeredBy) === String(req.authority?.officer?._id);
+    canAccessAssignedRecord(req.authority, [fir?.registeredBy]);
 
 const buildFIRQueryFilters = ({ search, status, crimeType } = {}) => {
     const filter = {};
@@ -347,7 +350,8 @@ const getAllFIRs = async (req, res) => {
         }
 
         const filter = query.filter;
-        if (req.authority?.rank === "investigating_officer") {
+        if (!isSeniorOfficerRank(req.authority?.rank) &&
+            req.authority?.systemRole !== "system_admin") {
             filter.registeredBy = req.authority.officer._id;
         }
         const page = Number.parseInt(req.query.page ?? "1", 10);

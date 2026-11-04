@@ -5,7 +5,7 @@ const CaseHistory = require("../models/CaseHistory");
 const Evidence = require("../models/Evidence");
 const Officer = require("../models/Officer");
 const Report = require("../models/Report");
-const { canManageOfficerRank } = require("../middleware/authority");
+const { canManageOfficerRank, isSeniorOfficerRank } = require("../middleware/authority");
 
 class ReportDataError extends Error {
     constructor(status, message, code) {
@@ -73,7 +73,7 @@ const getCrimeStatisticsData = async (query, authority) => {
     for (const field of ["city", "state", "pincode"]) {
         if (query[field] !== undefined) filter[`location.${field}`] = query[field].trim();
     }
-    if (authority.rank === "investigating_officer") filter.registeredBy = authority.officer._id;
+    if (!isSeniorOfficerRank(authority.rank)) filter.registeredBy = authority.officer._id;
 
     const [result] = await FIR.aggregate([
         { $match: filter },
@@ -120,7 +120,7 @@ const getMonthlyReportData = async (query, authority) => {
     if (!range) invalid("month must be a valid calendar month in YYYY-MM format", "INVALID_MONTH");
 
     const officerId = authority.officer._id;
-    const isInvestigatingOfficer = authority.rank === "investigating_officer";
+    const isInvestigatingOfficer = !isSeniorOfficerRank(authority.rank);
     const dateRange = { $gte: range.start, $lt: range.end };
     const firFilter = { date: dateRange };
     const caseFilter = { startDate: dateRange };

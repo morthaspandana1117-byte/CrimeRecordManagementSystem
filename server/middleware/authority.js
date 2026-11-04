@@ -1,8 +1,25 @@
 const User = require("../models/User");
 const Officer = require("../models/Officer");
 
+const CANONICAL_OFFICER_RANKS = [
+    "sp",
+    "dsp",
+    "inspector",
+    "si",
+    "asi",
+    "head_constable",
+    "constable",
+];
+const LEGACY_OFFICER_RANKS = ["investigating_officer"];
 const OFFICER_RANKS = [
+    ...LEGACY_OFFICER_RANKS,
+    ...CANONICAL_OFFICER_RANKS,
+];
+const RESTRICTED_FIELD_RANKS = ["head_constable", "constable"];
+const CASE_LIFECYCLE_RANKS = [
     "investigating_officer",
+    "si",
+    "asi",
     "inspector",
     "dsp",
     "sp",
@@ -66,6 +83,18 @@ const normalizeOfficerRank = (value) => {
         ? normalized
         : legacyRankAliases[normalized] || null;
 };
+
+const isSeniorOfficerRank = (rank) => SENIOR_OFFICER_RANKS.includes(normalizeOfficerRank(rank));
+const isRestrictedFieldRank = (rank) => RESTRICTED_FIELD_RANKS.includes(normalizeOfficerRank(rank));
+const isCanonicalOfficerRank = (rank) => CANONICAL_OFFICER_RANKS.includes(
+    typeof rank === "string" ? rank.trim().toLowerCase() : "",
+);
+const canAccessAssignedRecord = (authority, assignedOfficerIds = []) =>
+    authority?.systemRole === "system_admin" ||
+    isSeniorOfficerRank(authority?.rank) ||
+    assignedOfficerIds.some((officerId) =>
+        String(officerId?._id || officerId) === String(authority?.officer?._id),
+    );
 
 const normalizeSystemRole = (value) => {
     if (value === "admin" || value === "system_admin") return "system_admin";
@@ -172,10 +201,18 @@ const requireAuthority = ({ ranks = [], managementRanks = [], systemRoles = [] }
 
 module.exports = {
     OFFICER_RANKS,
+    CANONICAL_OFFICER_RANKS,
+    LEGACY_OFFICER_RANKS,
+    RESTRICTED_FIELD_RANKS,
+    CASE_LIFECYCLE_RANKS,
     OFFICER_MANAGEMENT_RANKS,
     SENIOR_OFFICER_RANKS,
     OFFICER_RANK_HIERARCHY,
     normalizeOfficerRank,
+    isSeniorOfficerRank,
+    isRestrictedFieldRank,
+    isCanonicalOfficerRank,
+    canAccessAssignedRecord,
     normalizeOfficerManagementRank,
     canManageOfficerRank,
     normalizeSystemRole,

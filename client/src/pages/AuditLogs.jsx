@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getAuditLogs, verifyAuditIntegrity } from '../services/api'
+import { auditIntegrityPresentation } from '../utils/auditIntegrity'
 
 const pageSize = 25
 
@@ -103,10 +104,13 @@ function AuditLogs() {
         </section>
 
         {integrityError && <div className="alert alert-danger" role="alert">{integrityError}</div>}
-        {integrity && <section className={`audit-integrity-card mb-4 ${integrity.valid ? 'audit-integrity-valid' : 'audit-integrity-invalid'}`} aria-live="polite">
+        {integrity && (() => {
+          const presentation = auditIntegrityPresentation(integrity)
+          const legacyRecords = Number(integrity.unprotectedRecords ?? integrity.legacyRecords ?? 0)
+          return <section className={`audit-integrity-card mb-4 ${presentation.cardClass}`} aria-live="polite">
           <div className="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-            <div><p className="eyebrow mb-1">Integrity verification</p><h2 className="section-title mb-0">{integrity.valid ? 'Verification passed' : 'Verification failed'}</h2></div>
-            <span className={`status-badge ${integrity.valid ? 'status-approved' : 'status-rejected'}`}>{integrity.valid ? 'Valid' : 'Issues detected'}</span>
+            <div><p className="eyebrow mb-1">Integrity verification</p><h2 className="section-title mb-0">{presentation.title}</h2></div>
+            <span className={`status-badge ${presentation.statusClass}`}>{presentation.statusLabel}</span>
           </div>
           <div className="row g-3">
             <div className="col-6 col-lg-3"><div className="audit-summary-item"><span>Records checked</span><strong>{Number(integrity.checkedRecords || 0).toLocaleString()}</strong></div></div>
@@ -114,9 +118,13 @@ function AuditLogs() {
             <div className="col-6 col-lg-3"><div className="audit-summary-item"><span>Legacy / unprotected</span><strong>{Number(integrity.unprotectedRecords ?? integrity.legacyRecords ?? 0).toLocaleString()}</strong></div></div>
             <div className="col-6 col-lg-3"><div className="audit-summary-item"><span>Malformed records</span><strong>{Number(integrity.malformedRecords || 0).toLocaleString()}</strong></div></div>
           </div>
+          <div className={`alert ${presentation.alertClass} mt-3 mb-0`} role={integrity.valid ? 'status' : 'alert'}>
+            <strong>{presentation.notice}</strong>
+            {integrity.valid && legacyRecords > 0 && <div className="mt-1">“Hash chain valid” means all protected records passed integrity verification; it does not mean every audit record is protected.</div>}
+          </div>
           {integrity.issue && <p className="mb-0 mt-3 text-danger">Issue: {integrity.issue}</p>}
-          {integrity.legacyRecords > 0 && <p className="mb-0 mt-3 text-secondary">Legacy records are not covered by the hash chain.</p>}
-        </section>}
+        </section>
+        })()}
 
         <section className="audit-control-panel mb-4">
           <div className="row g-3 align-items-end">

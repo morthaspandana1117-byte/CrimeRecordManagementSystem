@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
-import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, getCaseById, getCaseHistory, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
-import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename } from '../utils/evidenceFiles'
+import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, downloadEvidenceHistoryReport, getCaseById, getCaseHistory, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceReportButtonLabel, evidenceReportErrorMessage, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename, triggerEvidenceReportDownload } from '../utils/evidenceFiles'
+import { isSectionExpanded, toggleSectionId } from '../utils/collapsibleSections'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -24,13 +25,17 @@ function CaseDetails() {
   const [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState('')
   const [evidenceError, setEvidenceError] = useState('')
+  const [evidenceReportError, setEvidenceReportError] = useState({})
+  const [evidenceReportLoadingIds, setEvidenceReportLoadingIds] = useState([])
   const [custodyStates, setCustodyStates] = useState({})
   const [custodyHistories, setCustodyHistories] = useState({})
   const [custodyLoadingIds, setCustodyLoadingIds] = useState([])
   const [custodyErrors, setCustodyErrors] = useState({})
   const [custodyInputs, setCustodyInputs] = useState({})
   const [custodyActionIds, setCustodyActionIds] = useState([])
+  const [expandedCustodyIds, setExpandedCustodyIds] = useState([])
   const [caseHistoryError, setCaseHistoryError] = useState('')
+  const [caseHistoryExpanded, setCaseHistoryExpanded] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [showReopenDialog, setShowReopenDialog] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
@@ -41,12 +46,11 @@ function CaseDetails() {
   const [integrityResults, setIntegrityResults] = useState({})
   const [checkingIntegrityIds, setCheckingIntegrityIds] = useState([])
   const integrityChecksInFlight = useRef(new Set())
-  const [evidenceHistoryId, setEvidenceHistoryId] = useState('')
-  const [evidenceHistory, setEvidenceHistory] = useState([])
-  const [evidenceHistoryPagination, setEvidenceHistoryPagination] = useState({ page: 1, limit: 50, totalRecords: 0, totalPages: 1 })
-  const [evidenceHistoryLoadingId, setEvidenceHistoryLoadingId] = useState('')
-  const [evidenceHistoryError, setEvidenceHistoryError] = useState('')
-  const evidenceHistorySelection = useRef('')
+  const [expandedEvidenceHistoryIds, setExpandedEvidenceHistoryIds] = useState([])
+  const [evidenceHistories, setEvidenceHistories] = useState({})
+  const [evidenceHistoryPagination, setEvidenceHistoryPagination] = useState({})
+  const [evidenceHistoryLoadingIds, setEvidenceHistoryLoadingIds] = useState([])
+  const [evidenceHistoryErrors, setEvidenceHistoryErrors] = useState({})
   const evidenceHistoryRequests = useRef(new Set())
 
   const loadCustodyState = useCallback(async (evidenceId) => {
@@ -173,6 +177,20 @@ function CaseDetails() {
     }
   }
 
+  const handleDownloadEvidenceReport = async (item) => {
+      if (evidenceReportLoadingIds.includes(item._id)) return
+      setEvidenceReportLoadingIds((current) => [...current, item._id])
+      setEvidenceReportError((current) => ({ ...current, [item._id]: '' }))
+      try {
+        const response = await downloadEvidenceHistoryReport(item._id)
+        triggerEvidenceReportDownload(response.data, safeEvidenceDownloadFilename(`evidence-history-${item.evidenceId || 'report'}`, 'evidence-history-report') + '.pdf')
+      } catch (requestError) {
+        setEvidenceReportError((current) => ({ ...current, [item._id]: evidenceReportErrorMessage(requestError) || message(requestError, 'The evidence report could not be generated.') }))
+      } finally {
+        setEvidenceReportLoadingIds((current) => current.filter((id) => id !== item._id))
+    }
+  }
+
   const handleInitiateCustodyTransfer = async (item, event) => {
     event.preventDefault()
     const input = custodyInputs[item._id] || {}
@@ -230,41 +248,44 @@ function CaseDetails() {
     }
   }
 
+  const handleToggleEvidenceHistory = (item) => {
+    const selectedId = String(item._id)
+    setExpandedEvidenceHistoryIds((current) => toggleSectionId(current, selectedId))
+    if (evidenceHistoryRequests.current.has(selectedId)) return
+    if (evidenceHistories[selectedId]) return
+    setEvidenceHistoryPagination((current) => ({
+      ...current,
+      [selectedId]: { page: 1, limit: 50, totalRecords: 0, totalPages: 1 },
+    }))
+    void loadEvidenceHistory(selectedId, 1)
+  }
+
+  const toggleCustody = (evidenceId) => {
+    setExpandedCustodyIds((current) => toggleSectionId(current, evidenceId))
+  }
+
   const loadEvidenceHistory = async (evidenceId, page = 1) => {
     if (evidenceHistoryRequests.current.has(evidenceId)) return
     evidenceHistoryRequests.current.add(evidenceId)
-    setEvidenceHistoryLoadingId(evidenceId)
-    setEvidenceHistoryError('')
+    setEvidenceHistoryLoadingIds((current) => current.includes(evidenceId) ? current : [...current, evidenceId])
+    setEvidenceHistoryErrors((current) => ({ ...current, [evidenceId]: '' }))
     try {
       const response = await getEvidenceHistory(evidenceId, { page, limit: 50 })
-      if (evidenceHistorySelection.current !== evidenceId) return
-      setEvidenceHistory(evidenceHistoryItemsFromResponse(response))
-      setEvidenceHistoryPagination(evidenceHistoryPaginationFromResponse(response))
+      setEvidenceHistories((current) => ({ ...current, [evidenceId]: evidenceHistoryItemsFromResponse(response) }))
+      setEvidenceHistoryPagination((current) => ({ ...current, [evidenceId]: evidenceHistoryPaginationFromResponse(response) }))
     } catch (requestError) {
-      if (evidenceHistorySelection.current === evidenceId) {
-        setEvidenceHistoryError(message(requestError, 'Evidence history could not be loaded.'))
-      }
+      setEvidenceHistoryErrors((current) => ({ ...current, [evidenceId]: message(requestError, 'Evidence history could not be loaded.') }))
     } finally {
       evidenceHistoryRequests.current.delete(evidenceId)
-      setEvidenceHistoryLoadingId((current) => current === evidenceId ? '' : current)
+      setEvidenceHistoryLoadingIds((current) => current.filter((id) => id !== evidenceId))
     }
   }
 
-  const handleToggleEvidenceHistory = (item) => {
-    const selectedId = String(item._id)
-    if (evidenceHistorySelection.current === selectedId) {
-      evidenceHistorySelection.current = ''
-      setEvidenceHistoryId('')
-      setEvidenceHistory([])
-      setEvidenceHistoryError('')
-      return
-    }
-    evidenceHistorySelection.current = selectedId
-    setEvidenceHistoryId(selectedId)
-    setEvidenceHistory([])
-    setEvidenceHistoryPagination({ page: 1, limit: 50, totalRecords: 0, totalPages: 1 })
-    void loadEvidenceHistory(selectedId, 1)
-  }
+  const getEvidenceHistoryPage = (evidenceId) => evidenceHistoryPagination[evidenceId] || { page: 1, limit: 50, totalRecords: 0, totalPages: 1 }
+
+  const isEvidenceHistoryExpanded = (evidenceId) => isSectionExpanded(expandedEvidenceHistoryIds, String(evidenceId))
+
+  const isCustodyExpanded = (evidenceId) => isSectionExpanded(expandedCustodyIds, String(evidenceId))
 
   const handleVerifyEvidence = async (item, nextStatus) => {
     if (nextStatus === 'rejected') {
@@ -372,7 +393,8 @@ function CaseDetails() {
                     <strong>{displayValue(item.evidenceId)} · {displayValue(item.type)}</strong>
                     <div className="d-flex gap-2 flex-wrap">
                       {hasPrivateEvidenceFile(item) && <button className="btn btn-sm btn-outline-primary" onClick={() => handleDownloadEvidence(item)} type="button">Download</button>}
-                      <button className="btn btn-sm btn-outline-secondary" aria-expanded={evidenceHistoryId === item._id} onClick={() => handleToggleEvidenceHistory(item)} type="button">{evidenceHistoryId === item._id ? 'Hide History' : 'History'}</button>
+                      <button className="btn btn-sm btn-outline-primary" disabled={evidenceReportLoadingIds.includes(item._id)} onClick={() => handleDownloadEvidenceReport(item)} type="button">{evidenceReportButtonLabel(evidenceReportLoadingIds.includes(item._id))}</button>
+                      <button className="btn btn-sm btn-outline-secondary" aria-expanded={isEvidenceHistoryExpanded(item._id)} aria-controls={`evidence-history-panel-${item._id}`} onClick={() => handleToggleEvidenceHistory(item)} type="button">{isEvidenceHistoryExpanded(item._id) ? 'Hide History' : 'History'}</button>
                       {canCheckEvidenceIntegrity(user) && <button className="btn btn-sm btn-outline-info" disabled={checkingIntegrityIds.includes(item._id)} onClick={() => handleIntegrityCheck(item)} type="button">{integrityCheckButtonLabel(checkingIntegrityIds.includes(item._id))}</button>}
                       {isSeniorOfficer(user) && (
                         <>
@@ -381,11 +403,15 @@ function CaseDetails() {
                         </>
                       )}
                     </div>
+                    {evidenceReportError[item._id] && <div className="alert alert-warning mt-2 mb-0" role="alert">{evidenceReportError[item._id]}</div>}
                   </div>
                   <div>{displayValue(item.description)}</div>
                   <div className="small text-secondary">{displayValue(item.status)} · {date(item.collectionDate)} · Verification: {item.verificationStatus || 'unverified'}</div>
                   <div className="small mt-1" data-testid={`current-custodian-${item._id}`}>Current custodian: {officerName(item.currentCustodian || item.collectedBy)}</div>
-                  <section className="border rounded p-3 mt-3" aria-label={`Custody for evidence ${item.evidenceId}`}>
+                  <button className="btn btn-sm btn-outline-secondary mt-3" aria-expanded={isCustodyExpanded(item._id)} aria-controls={`custody-panel-${item._id}`} onClick={() => toggleCustody(String(item._id))} type="button">
+                    {isCustodyExpanded(item._id) ? 'Hide Chain of Custody' : 'Chain of Custody'}
+                  </button>
+                  {isCustodyExpanded(item._id) && <section className="border rounded p-3 mt-2" id={`custody-panel-${item._id}`} aria-label={`Custody for evidence ${item.evidenceId}`}>
                     <h4 className="h6">Chain of custody</h4>
                     {custodyLoadingIds.includes(String(item._id)) && <p role="status">Loading custody details...</p>}
                     {custodyErrors[item._id] && <div className="alert alert-warning" role="alert">{custodyErrors[item._id]}<button className="btn btn-sm btn-link" disabled={custodyLoadingIds.includes(String(item._id))} onClick={() => loadCustodyState(String(item._id))} type="button">Retry</button></div>}
@@ -416,19 +442,19 @@ function CaseDetails() {
                     )}
                     {!custodyLoadingIds.includes(String(item._id)) && !custodyErrors[item._id] && !custodyHistories[item._id]?.length && <p className="small text-secondary mb-0">No custody events recorded.</p>}
                     {custodyHistories[item._id]?.length > 0 && <ol className="list-unstyled mb-0">{custodyHistories[item._id].map((event) => <li className="border-bottom py-2" key={event._id}><strong>{event.action === 'TRANSFER_INITIATED' ? 'Transfer initiated' : event.action === 'TRANSFERRED' ? 'Transfer acknowledged' : event.action}</strong><div className="small text-secondary">{event.fromCustodian ? `${officerName(event.fromCustodian)} → ` : ''}{officerName(event.toCustodian)} · {dateTime(event.timestamp)}</div>{event.remarks && <div className="small">{event.remarks}</div>}</li>)}</ol>}
-                  </section>
+                  </section>}
                   {integrityResults[item._id]?.result && <div className="small mt-1" role="status">{integrityResultLabel(integrityResults[item._id].result)}</div>}
                   {integrityResults[item._id]?.error && <div className="small text-danger mt-1" role="alert">{integrityResults[item._id].error}</div>}
-                  {evidenceHistoryId === String(item._id) && (
-                    <section className="border rounded p-3 mt-3" aria-label={`History for evidence ${item.evidenceId}`}>
+                  {isEvidenceHistoryExpanded(item._id) && (
+                    <section className="border rounded p-3 mt-3" id={`evidence-history-panel-${item._id}`} aria-label={`History for evidence ${item.evidenceId}`}>
                       <h4 className="h6">Evidence history</h4>
-                      {evidenceHistoryLoadingId === String(item._id) && <p role="status">Loading evidence history...</p>}
-                      {evidenceHistoryError && <div className="alert alert-warning" role="alert">{evidenceHistoryError}<button className="btn btn-sm btn-link" disabled={evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page)} type="button">Retry</button></div>}
-                      {!evidenceHistoryLoadingId && !evidenceHistoryError && evidenceHistory.length === 0 && <p className="mb-0">No history recorded for this evidence.</p>}
-                      {evidenceHistory.length > 0 && (
+                      {evidenceHistoryLoadingIds.includes(String(item._id)) && <p role="status">Loading evidence history...</p>}
+                      {evidenceHistoryErrors[item._id] && <div className="alert alert-warning" role="alert">{evidenceHistoryErrors[item._id]}<button className="btn btn-sm btn-link" disabled={evidenceHistoryLoadingIds.includes(String(item._id))} onClick={() => loadEvidenceHistory(String(item._id), getEvidenceHistoryPage(String(item._id)).page)} type="button">Retry</button></div>}
+                      {!evidenceHistoryLoadingIds.includes(String(item._id)) && !evidenceHistoryErrors[item._id] && (evidenceHistories[item._id] || []).length === 0 && <p className="mb-0">No history recorded for this evidence.</p>}
+                      {(evidenceHistories[item._id] || []).length > 0 && (
                         <>
                           <ol className="list-unstyled mb-2">
-                            {evidenceHistory.map((event) => (
+                            {evidenceHistories[item._id].map((event) => (
                               <li className="border-bottom py-2" key={event.id}>
                                 <strong>{evidenceHistoryDescription(event)}</strong>
                                 <div className="small text-secondary">{event.actor?.username || 'Unknown actor'}{event.actor?.rank ? ` · ${event.actor.rank}` : ''} · <time dateTime={event.occurredAt}>{dateTime(event.occurredAt)}</time></div>
@@ -437,11 +463,11 @@ function CaseDetails() {
                               </li>
                             ))}
                           </ol>
-                          {evidenceHistoryPagination.totalPages > 1 && (
+                          {getEvidenceHistoryPage(item._id).totalPages > 1 && (
                             <div className="d-flex align-items-center gap-2">
-                              <button className="btn btn-sm btn-outline-secondary" disabled={evidenceHistoryPagination.page <= 1 || evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page - 1)} type="button">Newer</button>
-                              <span className="small">Page {evidenceHistoryPagination.page} of {evidenceHistoryPagination.totalPages}</span>
-                              <button className="btn btn-sm btn-outline-secondary" disabled={evidenceHistoryPagination.page >= evidenceHistoryPagination.totalPages || evidenceHistoryLoadingId === String(item._id)} onClick={() => loadEvidenceHistory(String(item._id), evidenceHistoryPagination.page + 1)} type="button">Older</button>
+                              <button className="btn btn-sm btn-outline-secondary" disabled={getEvidenceHistoryPage(item._id).page <= 1 || evidenceHistoryLoadingIds.includes(String(item._id))} onClick={() => loadEvidenceHistory(String(item._id), getEvidenceHistoryPage(item._id).page - 1)} type="button">Newer</button>
+                              <span className="small">Page {getEvidenceHistoryPage(item._id).page} of {getEvidenceHistoryPage(item._id).totalPages}</span>
+                              <button className="btn btn-sm btn-outline-secondary" disabled={getEvidenceHistoryPage(item._id).page >= getEvidenceHistoryPage(item._id).totalPages || evidenceHistoryLoadingIds.includes(String(item._id))} onClick={() => loadEvidenceHistory(String(item._id), getEvidenceHistoryPage(item._id).page + 1)} type="button">Older</button>
                             </div>
                           )}
                         </>
@@ -464,9 +490,15 @@ function CaseDetails() {
               )) : <p className="mb-0">No evidence linked to this case.</p>}
             </div>
             <div className="fir-detail-card mt-4">
-              <div className="detail-section-header"><h3>Case History</h3></div>
-              {caseHistoryError && <div className="alert alert-warning" role="alert">{caseHistoryError}</div>}
-              {caseHistory.length ? caseHistory.map((entry) => (
+              <div className="detail-section-header d-flex align-items-center justify-content-between gap-3">
+                <h3 className="mb-0">Case History</h3>
+                <button className="btn btn-sm btn-outline-secondary" aria-expanded={caseHistoryExpanded} aria-controls="case-history-panel" onClick={() => setCaseHistoryExpanded((current) => !current)} type="button">
+                  {caseHistoryExpanded ? 'Hide Case History' : 'Show Case History'}
+                </button>
+              </div>
+              {caseHistoryExpanded && <div id="case-history-panel">
+                {caseHistoryError && <div className="alert alert-warning" role="alert">{caseHistoryError}</div>}
+                {caseHistory.length ? caseHistory.map((entry) => (
                 <div className="border rounded p-3 mb-2" key={entry._id || `${entry.actionType}-${entry.timestamp}`}>
                   <div className="d-flex justify-content-between gap-3 align-items-center flex-wrap">
                     <strong>{entry.actionType || 'Case event'}</strong>
@@ -478,7 +510,8 @@ function CaseDetails() {
                   {entry.previousValue && <div className="small text-secondary">Previous: {JSON.stringify(entry.previousValue)}</div>}
                   {entry.newValue && <div className="small text-secondary">Updated: {JSON.stringify(entry.newValue)}</div>}
                 </div>
-              )) : <p className="mb-0">No case history recorded yet.</p>}
+                )) : <p className="mb-0">No case history recorded yet.</p>}
+              </div>}
             </div>
             {record.investigationHistory?.length > 0 && <div className="fir-detail-card mt-4"><div className="detail-section-header"><h3>Investigation History</h3></div>{record.investigationHistory.map((round) => { const roundEvidence = evidence.filter((item) => item.investigationRound === round.round); return <div className="border rounded p-3 mb-3" key={round.round}><strong>Investigation Round {round.round}</strong><div className="small text-secondary">Started: {date(round.startedAt)} · Closed: {date(round.closedAt)} · {displayValue(round.status)}</div>{round.reopenReason && <div>Reason: {round.reopenReason}</div>}<div className="mt-2">{roundEvidence.length ? roundEvidence.map((item) => <div key={item._id}>{item.evidenceId} · {item.type}</div>) : 'No evidence recorded in this round.'}</div></div> })}</div>}
           </>

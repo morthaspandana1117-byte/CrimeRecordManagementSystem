@@ -6,6 +6,7 @@ const CaseHistory = require("../models/CaseHistory");
 const AuditLog = require("../models/AuditLog");
 const evidenceFileService = require("../services/evidenceFileService");
 const auditService = require("../services/auditService");
+const { createPdfBuffer, evidenceHistoryReportSections } = require("../services/pdfReportService");
 const mongoose = require("mongoose");
 const {
     isValidObjectId,
@@ -17,6 +18,11 @@ const {
     validateReference,
     handleError,
 } = require("./controllerUtils");
+const {
+    canAccessAssignedRecord,
+    isRestrictedFieldRank,
+    isSeniorOfficerRank,
+} = require("../middleware/authority");
 
 const validEvidenceStatuses = [
     "Collected",
@@ -198,10 +204,7 @@ const appendCaseHistory = async ({ caseId, actionType, description, performedBy,
 };
 
 const canAccessCase = (req, caseRecord) =>
-    req.authority?.rank !== "investigating_officer" ||
-    caseRecord?.assignedOfficerIds?.some((officerId) =>
-        String(officerId) === String(req.authority?.officer?._id),
-    );
+    canAccessAssignedRecord(req.authority, caseRecord?.assignedOfficerIds);
 
 const buildEvidenceQueryFilters = ({ search, status, type, caseId, investigationRound, collectedBy, collectionDateFrom, collectionDateTo } = {}) => {
     const filter = {};
@@ -759,7 +762,8 @@ const getAllEvidence = async (req, res) => {
         }
 
         const filter = query.filter;
-        if (req.authority?.rank === "investigating_officer") {
+        if (!isSeniorOfficerRank(req.authority?.rank) &&
+            req.authority?.systemRole !== "system_admin") {
             const assignedCases = await Case.find({ assignedOfficerIds: req.authority.officer._id }).select("_id");
             filter.caseId = { $in: assignedCases.map((record) => record._id) };
         }
@@ -1211,7 +1215,7 @@ const getPendingEvidenceCustodyTransfer = async (req, res) => {
         const actorOfficerId = req.authority?.officer?._id;
         const canInitiate = !!actorOfficerId && (
             String(currentCustodianId) === String(actorOfficerId) ||
-            ["inspector", "dsp", "sp"].includes(req.authority?.rank)
+            isSeniorOfficerRank(req.authority?.rank)
         );
         if (!pending) return res.status(200).json({ success: true, data: null, canInitiate });
         return res.status(200).json({
@@ -1297,6 +1301,7 @@ const getEvidenceHistory = async (req, res) => {
             const parsed = Number(candidate);
             return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
         };
+
         const page = parsePositiveInteger(req.query.page, "1");
         const limit = parsePositiveInteger(req.query.limit, "50");
         if (page === null || limit === null || limit > 100) {
@@ -1359,6 +1364,88 @@ const getEvidenceHistory = async (req, res) => {
     }
 };
 
+const generateEvidenceHistoryReport = async (req, res) => {
+    if (!isValidObjectId(req.params.id)) {
+        return invalid(res, "Invalid evidence ID", "INVALID_EVIDENCE_ID");
+    }
+
+    try {
+        const evidence = await Evidence.findById(req.params.id)
+            .select("evidenceId caseId investigationRound type description collectedBy currentCustodian pendingCustodyTransfer collectionDate location status verificationStatus verifiedAt")
+            .populate("caseId", "caseNo title status assignedOfficerIds")
+            .populate("collectedBy", "officerId name rank")
+            .populate("currentCustodian", "officerId name rank")
+            .populate("pendingCustodyTransfer.fromCustodian", "officerId name rank")
+            .populate("pendingCustodyTransfer.toCustodian", "officerId name rank")
+            .populate("pendingCustodyTransfer.initiatedByOfficer", "officerId name rank")
+            .lean();
+        if (!evidence) return notFound(res, "Evidence");
+
+        if (!evidence.caseId || !canAccessCase(req, evidence.caseId)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only generate reports for evidence in accessible cases",
+                error: "CASE_ACCESS_DENIED",
+            });
+        }
+
+        const auditFilter = { entityType: "Evidence", entityId: evidence._id };
+        const [integrityChecks, auditEvents, custodyEvents] = await Promise.all([
+            AuditLog.find({ ...auditFilter, action: "EVIDENCE_INTEGRITY_CHECKED" })
+                .select("actor action occurredAt changes")
+                .populate("actor", "username role")
+                .sort({ occurredAt: 1, _id: 1 })
+                .lean(),
+            AuditLog.find(auditFilter)
+                .select("actor action occurredAt")
+                .populate("actor", "username role")
+                .sort({ occurredAt: 1, _id: 1 })
+                .lean(),
+            EvidenceCustodyHistory.find({ evidenceId: evidence._id })
+                .select("action fromCustodian toCustodian performedByOfficer timestamp")
+                .populate("fromCustodian", "officerId name rank")
+                .populate("toCustodian", "officerId name rank")
+                .populate("performedByOfficer", "officerId name rank")
+                .sort({ timestamp: 1, _id: 1 })
+                .lean(),
+        ]);
+
+        const custodyStatus = (action) => {
+            if (action === "TRANSFER_INITIATED") return "Pending";
+            if (["TRANSFERRED", "RECEIVED"].includes(action)) return "Completed";
+            return "Recorded";
+        };
+        const sections = evidenceHistoryReportSections({
+            evidence,
+            integrityChecks,
+            custodyEvents: custodyEvents.map((event) => ({ ...event, status: custodyStatus(event.action) })),
+            pendingTransfer: evidence.pendingCustodyTransfer,
+            auditEvents,
+        });
+        const generatedAt = new Date();
+        const pdf = await createPdfBuffer({
+            title: `Evidence History Report - ${evidence.evidenceId}`,
+            reportType: "Evidence history",
+            sections,
+            generatedAt,
+        });
+        const safeEvidenceId = String(evidence.evidenceId)
+            .replace(/[^a-zA-Z0-9._-]/g, "_")
+            .slice(0, 100) || "evidence";
+
+        res.status(200).set({
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `attachment; filename="evidence-history-${safeEvidenceId}.pdf"`,
+            "Content-Length": String(pdf.length),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        });
+        return res.send(pdf);
+    } catch (error) {
+        return handleError(res, error, "Generate evidence history report error");
+    }
+};
+
 const initiateEvidenceCustodyTransfer = async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
@@ -1408,7 +1495,14 @@ const initiateEvidenceCustodyTransfer = async (req, res) => {
         }
 
         const isCurrentCustodian = String(currentCustodianId) === String(actorOfficerId);
-        const isSeniorOfficer = !!actorRank && ["inspector", "dsp", "sp"].includes(actorRank);
+        if (isRestrictedFieldRank(actorRank)) {
+            return res.status(403).json({
+                success: false,
+                message: "Your rank cannot initiate evidence custody transfers",
+                error: "INSUFFICIENT_PERMISSIONS",
+            });
+        }
+        const isSeniorOfficer = isSeniorOfficerRank(actorRank);
         if (!isCurrentCustodian && !isSeniorOfficer) {
             return res.status(403).json({
                 success: false,
@@ -1644,7 +1738,7 @@ const verifyEvidence = async (req, res) => {
         }
 
         const rank = req.authority?.rank;
-        if (!rank || !["inspector", "dsp", "sp"].includes(rank)) {
+        if (!isSeniorOfficerRank(rank)) {
             return res.status(403).json({
                 success: false,
                 message: "Only Inspector, DSP, and SP officers can verify evidence",
@@ -1706,6 +1800,7 @@ module.exports = {
     getEvidenceCustodyHistory,
     getPendingEvidenceCustodyTransfer,
     getEvidenceHistory,
+    generateEvidenceHistoryReport,
     transferEvidenceCustody,
     initiateEvidenceCustodyTransfer,
     acknowledgeEvidenceCustodyTransfer,
