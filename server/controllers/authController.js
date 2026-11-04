@@ -1,6 +1,7 @@
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
 const {
@@ -12,10 +13,49 @@ const {
 const { sendPasswordResetEmail } = require("../services/emailService");
 const auditService = require("../services/auditService");
 
-const recordAuthEvent = (event) => auditService.log(event).catch((error) => {
-    console.error("Authentication audit logging failed:", error.message);
-});
+const recordAuthEvent = async (event) => {
+    try {
+        return await auditService.log(event);
+    } catch (error) {
+        console.error("Authentication audit logging failed:", error.message);
+        const wrappedError = Object.assign(new Error("Authentication audit record could not be persisted"), {
+            code: "AUDIT_LOGGING_FAILED",
+            cause: error,
+        });
+        wrappedError.hasErrorLabel = (label) => error.hasErrorLabel?.(label) || false;
+        wrappedError.errorLabels = error.errorLabels;
+        throw wrappedError;
+    }
+};
 const authRoutePath = (req) => req.baseUrl + (req.route?.path || "/unknown");
+
+const persistAuthMutationAndAudit = async ({ event, persist, rollback }) => {
+    if (await auditService.isTransactionCapableTopology()) {
+        const session = await mongoose.startSession();
+        try {
+            let result;
+            await session.withTransaction(async () => {
+                result = await persist(session);
+                await recordAuthEvent({ ...event, session });
+            });
+            return result;
+        } finally {
+            await session.endSession();
+        }
+    }
+
+    await persist();
+    try {
+        await recordAuthEvent(event);
+    } catch (error) {
+        try {
+            await rollback();
+        } catch (rollbackError) {
+            error.rollbackError = rollbackError;
+        }
+        throw error;
+    }
+};
 
 const RESET_TOKEN_EXPIRY_MS = 30 * 60 * 1000;
 const GENERIC_RESET_MESSAGE =
@@ -23,6 +63,30 @@ const GENERIC_RESET_MESSAGE =
 
 const hashResetToken = (token) =>
     crypto.createHash("sha256").update(token).digest("hex");
+
+const restoreResetState = async ({ userId, writtenToken, writtenExpiry, previousToken, previousExpiry, passwordHash, writtenPasswordHash }) => {
+    const filter = {
+        _id: userId,
+        passwordResetToken: writtenToken,
+        passwordResetExpires: writtenExpiry,
+    };
+    if (writtenPasswordHash !== undefined) filter.passwordHash = writtenPasswordHash;
+    const update = {
+        $set: {},
+        $unset: {},
+    };
+    if (passwordHash !== undefined) update.$set.passwordHash = passwordHash;
+    if (previousToken === undefined) update.$unset.passwordResetToken = 1;
+    else update.$set.passwordResetToken = previousToken;
+    if (previousExpiry === undefined) update.$unset.passwordResetExpires = 1;
+    else update.$set.passwordResetExpires = previousExpiry;
+    if (!Object.keys(update.$set).length) delete update.$set;
+    if (!Object.keys(update.$unset).length) delete update.$unset;
+    const result = await User.updateOne(filter, update);
+    if (result.matchedCount !== 1) {
+        throw new Error("Reset-state rollback could not safely restore the original account state");
+    }
+};
 
 const forgotPassword = async (req, res) => {
     const email = typeof req.body.email === "string" ? req.body.email.trim().toLowerCase() : "";
@@ -46,15 +110,32 @@ const forgotPassword = async (req, res) => {
         }
 
         const resetToken = crypto.randomBytes(32).toString("hex");
+        const previousResetToken = user.passwordResetToken;
+        const previousResetExpiry = user.passwordResetExpires;
         user.passwordResetToken = hashResetToken(resetToken);
         user.passwordResetExpires = new Date(Date.now() + RESET_TOKEN_EXPIRY_MS);
-        await user.save();
-
+        await persistAuthMutationAndAudit({
+            event: { actor: user._id, action: "PASSWORD_RESET_REQUESTED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) },
+            persist: (session) => user.save(session ? { session } : undefined),
+            rollback: async () => {
+                await restoreResetState({
+                    userId: user._id,
+                    writtenToken: user.passwordResetToken,
+                    writtenExpiry: user.passwordResetExpires,
+                    previousToken: previousResetToken,
+                    previousExpiry: previousResetExpiry,
+                });
+            },
+        });
+        // Email delivery is external to MongoDB. A delivery failure can leave
+        // a valid, audited reset token, so the endpoint still reports failure.
         await sendPasswordResetEmail(user.email, resetToken);
-        await recordAuthEvent({ actor: user._id, action: "PASSWORD_RESET_REQUESTED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
         return res.status(200).json({ success: true, message: GENERIC_RESET_MESSAGE });
     } catch (error) {
         console.error("Forgot password error:", error);
+        if (error.code === "AUDIT_LOGGING_FAILED") {
+            return res.status(503).json({ success: false, message: "Password reset is temporarily unavailable", error: "AUDIT_LOGGING_FAILED" });
+        }
         return res.status(500).json({
             success: false,
             message: "Unable to send password reset instructions",
@@ -78,8 +159,9 @@ const resetPassword = async (req, res) => {
     }
 
     try {
+        const tokenHash = hashResetToken(token);
         const user = await User.findOne({
-            passwordResetToken: hashResetToken(token),
+            passwordResetToken: tokenHash,
             passwordResetExpires: { $gt: new Date() },
         }).select("+passwordResetToken +passwordResetExpires");
 
@@ -90,16 +172,94 @@ const resetPassword = async (req, res) => {
             return res.status(400).json({ success: false, message: "This reset link is invalid or has expired", error: "INVALID_RESET_TOKEN" });
         }
 
-        user.passwordHash = await bcrypt.hash(password, 10);
-        user.passwordResetToken = undefined;
-        user.passwordResetExpires = undefined;
-        await user.save();
-
-        await recordAuthEvent({ actor: user._id, action: "PASSWORD_RESET_COMPLETED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
+        const passwordHash = await bcrypt.hash(password, 10);
+        const previousPasswordHash = user.passwordHash;
+        const previousResetToken = user.passwordResetToken;
+        const event = {
+            actor: user._id,
+            action: "PASSWORD_RESET_COMPLETED",
+            entityType: "Authentication",
+            entityId: user._id,
+            method: req.method,
+            path: authRoutePath(req),
+        };
+        const expiry = user.passwordResetExpires;
+        if (await auditService.isTransactionCapableTopology()) {
+            const session = await mongoose.startSession();
+            try {
+                await session.withTransaction(async () => {
+                    const freshUser = await User.findOne({
+                        passwordResetToken: tokenHash,
+                        passwordResetExpires: { $gt: new Date() },
+                    }).select("+passwordResetToken +passwordResetExpires").session(session).lean();
+                    if (
+                        !freshUser ||
+                        !freshUser.isActive ||
+                        (freshUser.role === "officer" && (freshUser.status || "approved") !== "approved") ||
+                        (freshUser.role === "officer" && !(await Officer.exists({ userId: freshUser._id, status: "active" }).session(session)))
+                    ) {
+                        throw Object.assign(new Error("Invalid reset token"), { code: "INVALID_RESET_TOKEN" });
+                    }
+                    const updated = await User.updateOne(
+                        {
+                            _id: freshUser._id,
+                            passwordResetToken: tokenHash,
+                            passwordResetExpires: { $gt: new Date() },
+                            isActive: true,
+                        },
+                        { $set: { passwordHash }, $unset: { passwordResetToken: 1, passwordResetExpires: 1 } },
+                        { session },
+                    );
+                    if (updated.matchedCount !== 1) {
+                        throw Object.assign(new Error("Invalid reset token"), { code: "INVALID_RESET_TOKEN" });
+                    }
+                    await recordAuthEvent({ ...event, session });
+                });
+            } finally {
+                await session.endSession();
+            }
+        } else {
+            const updated = await User.updateOne(
+                {
+                    _id: user._id,
+                    passwordResetToken: tokenHash,
+                    passwordResetExpires: { $gt: new Date() },
+                    isActive: true,
+                },
+                { $set: { passwordHash }, $unset: { passwordResetToken: 1, passwordResetExpires: 1 } },
+            );
+            if (updated.matchedCount !== 1) {
+                return res.status(400).json({ success: false, message: "This reset link is invalid or has expired", error: "INVALID_RESET_TOKEN" });
+            }
+            try {
+                await recordAuthEvent(event);
+            } catch (error) {
+                try {
+                    await restoreResetState({
+                        userId: user._id,
+                        writtenToken: undefined,
+                        writtenExpiry: undefined,
+                        previousToken: previousResetToken,
+                        previousExpiry: expiry,
+                        writtenPasswordHash: passwordHash,
+                        passwordHash: previousPasswordHash,
+                    });
+                } catch (rollbackError) {
+                    error.rollbackError = rollbackError;
+                }
+                throw error;
+            }
+        }
 
         return res.status(200).json({ success: true, message: "Password reset successful" });
     } catch (error) {
         console.error("Reset password error:", error);
+        if (error.code === "INVALID_RESET_TOKEN") {
+            return res.status(400).json({ success: false, message: "This reset link is invalid or has expired", error: "INVALID_RESET_TOKEN" });
+        }
+        if (error.code === "AUDIT_LOGGING_FAILED") {
+            return res.status(503).json({ success: false, message: "Password reset is temporarily unavailable", error: "AUDIT_LOGGING_FAILED" });
+        }
         return res.status(500).json({ success: false, message: "Unable to reset password", error: "RESET_PASSWORD_ERROR" });
     }
 };
@@ -222,6 +382,9 @@ const login = async (req, res) => {
         });
     } catch (error) {
         console.error("Login error:", error);
+        if (error.code === "AUDIT_LOGGING_FAILED") {
+            return res.status(503).json({ success: false, message: "Authentication is temporarily unavailable", error: "AUDIT_LOGGING_FAILED" });
+        }
 
         res.status(500).json({
             success: false,

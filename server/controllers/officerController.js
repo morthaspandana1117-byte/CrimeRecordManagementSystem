@@ -274,17 +274,18 @@ const registerOfficer = async (req, res) => {
 
         await officer.save({ session });
 
-        await session.commitTransaction();
-
         await auditService.log({
-            actor: null,
+            actor: req.user?.userId || null,
             action: "OFFICER_REGISTRATION_SUBMITTED",
             entityType: "Officer",
             entityId: officer._id,
             after: officer,
             method: req.method,
             path: req.baseUrl + req.path,
-        }).catch((error) => console.error("Officer registration audit logging failed:", error.message));
+            session,
+        });
+
+        await session.commitTransaction();
 
         return res.status(201).json({
             success: true,
@@ -671,6 +672,7 @@ const getAssignableOfficers = async (req, res) => {
 };
 
 const updateOfficerAccountStatus = async (req, res) => {
+    let session;
     try {
         if (!isValidObjectId(req.params.id)) {
             return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
@@ -718,40 +720,108 @@ const updateOfficerAccountStatus = async (req, res) => {
             });
         }
 
-        const officerUpdate = await Officer.updateOne(
-            { _id: officer._id, rank: officer.rank },
-            { $set: { status: accountStatus } },
-            { runValidators: true },
-        );
-        if (officerUpdate.matchedCount !== 1) {
-            return notFound(res, "Officer");
+        const isActive = accountStatus === "active";
+        if (!(await auditService.isTransactionCapableTopology())) {
+            return res.status(503).json({
+                success: false,
+                message: "Officer account status changes require transaction support",
+                error: "OFFICER_STATUS_TRANSACTIONS_UNAVAILABLE",
+            });
         }
 
-        const isActive = accountStatus === "active";
-        const userUpdate = await User.updateOne(
-            { _id: user._id, role: "officer" },
-            { $set: { isActive } },
-            { runValidators: true },
-        );
-        if (userUpdate.matchedCount !== 1) {
+        session = await mongoose.startSession();
+        let updatedOfficer;
+        let updatedUser;
+        await session.withTransaction(async () => {
+            const freshOfficer = await Officer.findById(req.params.id)
+                .select("officerId rank status userId name")
+                .session(session)
+                .lean();
+            if (!freshOfficer) {
+                throw Object.assign(new Error("Officer not found"), { code: "OFFICER_NOT_FOUND" });
+            }
+            if (
+                req.authority?.systemRole !== "system_admin" &&
+                !canManageOfficerRank(req.authority?.managementRank, freshOfficer.rank)
+            ) {
+                throw Object.assign(new Error("Officer management denied"), { code: "OFFICER_MANAGEMENT_DENIED" });
+            }
+            const freshUser = await User.findById(freshOfficer.userId)
+                .select("role status isActive")
+                .session(session)
+                .lean();
+            if (!freshUser || freshUser.role !== "officer") {
+                throw Object.assign(new Error("Linked officer account not found"), { code: "USER_NOT_FOUND" });
+            }
+            const before = {
+                officerId: freshOfficer.officerId,
+                rank: freshOfficer.rank,
+                name: freshOfficer.name,
+                status: freshOfficer.status,
+                approvalStatus: freshUser.status,
+                isActive: freshUser.isActive,
+            };
+            const officerUpdate = await Officer.updateOne(
+                { _id: freshOfficer._id, rank: freshOfficer.rank },
+                { $set: { status: accountStatus } },
+                { runValidators: true, session },
+            );
+            if (officerUpdate.matchedCount !== 1) {
+                throw Object.assign(new Error("Officer not found"), { code: "OFFICER_NOT_FOUND" });
+            }
+
+            const userUpdate = await User.updateOne(
+                { _id: freshUser._id, role: "officer" },
+                { $set: { isActive } },
+                { runValidators: true, session },
+            );
+            if (userUpdate.matchedCount !== 1) {
+                throw Object.assign(new Error("Linked officer account not found"), { code: "USER_NOT_FOUND" });
+            }
+
+            await auditService.log({
+                actor: req.authority?.user?._id || req.user?.userId,
+                action: "OFFICER_ACCOUNT_STATUS_CHANGED",
+                entityType: "Officer",
+                entityId: freshOfficer._id,
+                before,
+                after: {
+                    officerId: freshOfficer.officerId,
+                    rank: freshOfficer.rank,
+                    name: freshOfficer.name,
+                    status: accountStatus,
+                    approvalStatus: freshUser.status,
+                    isActive,
+                },
+                method: req.method,
+                path: req.baseUrl + req.path,
+                session,
+            });
+            updatedOfficer = { ...freshOfficer, status: accountStatus };
+            updatedUser = { ...freshUser, isActive };
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: `Officer account ${accountStatus === "active" ? "activated" : "deactivated"} successfully`,
+            data: {
+                id: updatedOfficer._id,
+                accountStatus: isActive ? "active" : "inactive",
+                approvalStatus: updatedUser.status || "approved",
+            },
+        });
+    } catch (error) {
+        if (error.code === "OFFICER_NOT_FOUND") return notFound(res, "Officer");
+        if (error.code === "USER_NOT_FOUND") {
             return res.status(404).json({
                 success: false,
                 message: "Linked officer account not found",
                 error: "USER_NOT_FOUND",
             });
         }
-
-        return res.status(200).json({
-            success: true,
-            message: `Officer account ${accountStatus === "active" ? "activated" : "deactivated"} successfully`,
-            data: {
-                id: officer._id,
-                accountStatus: isActive ? "active" : "inactive",
-                approvalStatus: user.status || "approved",
-            },
-        });
-    } catch (error) {
         return handleError(res, error, "Update officer account status error");
+    } finally {
+        if (session) await session.endSession();
     }
 };
 
@@ -802,11 +872,56 @@ const deleteOfficer = async (req, res) => {
 
         session.startTransaction();
 
-        officer.status = "inactive";
-        await officer.save({ session });
+        const freshOfficer = await Officer.findById(req.params.id).session(session);
+        if (!freshOfficer) {
+            throw Object.assign(new Error("Officer not found"), { code: "OFFICER_NOT_FOUND" });
+        }
+        if (
+            req.authority?.systemRole !== "system_admin" &&
+            !canManageOfficerRank(req.authority?.managementRank, freshOfficer.rank)
+        ) {
+            throw Object.assign(new Error("Officer management denied"), { code: "OFFICER_MANAGEMENT_DENIED" });
+        }
+        const freshUser = await User.findById(freshOfficer.userId).session(session);
+        if (!freshUser) {
+            throw Object.assign(new Error("Linked officer account not found"), { code: "USER_NOT_FOUND" });
+        }
+        if (freshUser.role !== "officer") {
+            throw Object.assign(new Error("Only officer accounts can be deactivated"), { code: "INVALID_ACCOUNT_ROLE" });
+        }
+        const freshOfficerBefore = {
+            officerId: freshOfficer.officerId,
+            rank: freshOfficer.rank,
+            name: freshOfficer.name,
+            status: freshOfficer.status,
+        };
+        const freshUserBefore = {
+            approvalStatus: freshUser.status,
+            isActive: freshUser.isActive,
+        };
+        freshOfficer.status = "inactive";
+        await freshOfficer.save({ session });
+        freshUser.isActive = false;
+        await freshUser.save({ session });
 
-        user.isActive = false;
-        await user.save({ session });
+        await auditService.log({
+            actor: req.authority?.user?._id || req.user?.userId,
+            action: "OFFICER_ACCOUNT_STATUS_CHANGED",
+            entityType: "Officer",
+            entityId: freshOfficer._id,
+            before: { ...freshOfficerBefore, ...freshUserBefore },
+            after: {
+                officerId: freshOfficer.officerId,
+                rank: freshOfficer.rank,
+                name: freshOfficer.name,
+                status: freshOfficer.status,
+                approvalStatus: freshUser.status,
+                isActive: freshUser.isActive,
+            },
+            method: req.method,
+            path: req.baseUrl + req.path,
+            session,
+        });
 
         await session.commitTransaction();
 
@@ -814,10 +929,10 @@ const deleteOfficer = async (req, res) => {
             success: true,
             message: "Officer deactivated successfully",
             data: {
-                id: officer._id,
-                status: officer.status,
-                isActive: user.isActive,
-                ...(req.authority?.systemRole === "system_admin" ? {} : { officerId: officer.officerId }),
+                id: freshOfficer._id,
+                status: freshOfficer.status,
+                isActive: freshUser.isActive,
+                ...(req.authority?.systemRole === "system_admin" ? {} : { officerId: freshOfficer.officerId }),
             },
         });
     } catch (error) {
@@ -827,6 +942,28 @@ const deleteOfficer = async (req, res) => {
 
         console.error("Deactivate officer error:", error);
 
+        if (error.code === "OFFICER_NOT_FOUND") return notFound(res, "Officer");
+        if (error.code === "USER_NOT_FOUND") {
+            return res.status(404).json({
+                success: false,
+                message: "Linked user account not found",
+                error: "USER_NOT_FOUND",
+            });
+        }
+        if (error.code === "INVALID_ACCOUNT_ROLE") {
+            return res.status(400).json({
+                success: false,
+                message: "Only officer accounts can be deactivated",
+                error: "INVALID_ACCOUNT_ROLE",
+            });
+        }
+        if (error.code === "OFFICER_MANAGEMENT_DENIED") {
+            return res.status(403).json({
+                success: false,
+                message: "You may only deactivate officers permitted by your authority",
+                error: "OFFICER_MANAGEMENT_DENIED",
+            });
+        }
         return handleError(res, error, "Deactivate officer error");
     } finally {
         await session.endSession();

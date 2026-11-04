@@ -55,6 +55,17 @@ button, input, select, textarea { font: inherit; }
 .report-table-card { overflow: hidden; padding: 0; }
 .report-table-card th { color: #536276; font-size: .75rem; text-transform: uppercase; white-space: nowrap; }
 .report-table-card td { vertical-align: middle; }
+.audit-control-panel, .audit-integrity-card, .audit-table-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; padding: 1.25rem; }
+.audit-integrity-card { border-left: .35rem solid #2c8a55; }
+.audit-integrity-invalid { border-left-color: #b53b3b; }
+.audit-summary-item { background: #f8fafe; border: 1px solid #e6edf8; border-radius: .75rem; padding: .8rem .9rem; }
+.audit-summary-item span { color: #536276; display: block; font-size: .74rem; font-weight: 700; text-transform: uppercase; }
+.audit-summary-item strong { color: #172f53; display: block; font-size: 1.35rem; margin-top: .2rem; }
+.audit-table-card { overflow: hidden; padding: 0; }
+.audit-table-card th { color: #536276; font-size: .75rem; text-transform: uppercase; white-space: nowrap; }
+.audit-table-card td { vertical-align: middle; }
+.audit-action { color: #174f95; font-weight: 700; }
+.audit-entity-id { color: #536276; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; }
 .assignment-selector-card { background: #fff; border: 1px solid #e1e8f1; border-radius: 1rem; padding: 1rem; }
 .assignment-option { background: #f8fbff; border: 1px solid #dfeaf9; border-radius: .85rem; color: #172033; padding: .9rem 1rem; text-align: left; width: 100%; }
 .assignment-option.selected { border-color: #174f95; background: #ebf3ff; }

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import { useAuth } from './context/useAuth'
 import AdminDashboard from './pages/AdminDashboard'
+import AuditLogs from './pages/AuditLogs'
 import CriminalAdd from './pages/CriminalAdd'
 import CriminalDetails from './pages/CriminalDetails'
 import CriminalEdit from './pages/CriminalEdit'
@@ -43,6 +44,7 @@ function App() {
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute allowedRanks={officerRanks}><Reports /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
+      <Route path="/admin/audit-logs" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AuditLogs /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
       <Route path="/officers/:id" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerDetails /></ProtectedRoute>} />
       <Route path="/officers/:id/edit" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerEdit /></ProtectedRoute>} />

@@ -5,6 +5,7 @@ const controller = require("../controllers/auditController");
 
 const router = express.Router();
 router.use(authMiddleware, resolveAuthority, requireAuthority({ systemRoles: ["system_admin"] }));
+router.get("/integrity", controller.verifyAuditIntegrity);
 router.get("/", controller.listAuditLogs);
 router.get("/:id", controller.getAuditLog);
 

@@ -1,4 +1,5 @@
 const AuditLog = require("../models/AuditLog");
+const auditService = require("../services/auditService");
 const { isValidObjectId, invalid, handleError } = require("./controllerUtils");
 
 const listAuditLogs = async (req, res) => {
@@ -44,4 +45,13 @@ const getAuditLog = async (req, res) => {
     }
 };
 
-module.exports = { listAuditLogs, getAuditLog };
+const verifyAuditIntegrity = async (req, res) => {
+    try {
+        const result = await auditService.verifyIntegrity();
+        return res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        return handleError(res, error, "Verify audit integrity error");
+    }
+};
+
+module.exports = { listAuditLogs, getAuditLog, verifyAuditIntegrity };

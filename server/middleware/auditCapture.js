@@ -48,6 +48,11 @@ const auditCapture = async (req, res, next) => {
     const resource = RESOURCE_MODELS[resourceName];
     const method = req.method.toUpperCase();
     if (!resource || !["POST", "PUT", "PATCH", "DELETE"].includes(method)) return next();
+    // Officer deactivation is committed explicitly with its controller transaction.
+    if (resourceName === "officers" && (
+        method === "DELETE" ||
+        /\/(?:deactivate|status)\/?$/.test(req.path)
+    )) return next();
 
     const [entityType, modelPath] = resource;
     const Model = require(modelPath);
@@ -82,7 +87,12 @@ const auditCapture = async (req, res, next) => {
             path: req.baseUrl + req.path,
         }).then(() => sendJson(body)).catch((error) => {
             console.error("Audit logging failed:", error.message);
-            sendJson(body);
+            // The controller has already committed. Preserve its response and
+            // explicitly signal the audit failure instead of claiming rollback.
+            if (!res.headersSent) {
+                res.setHeader("X-Audit-Logging-Failed", "true");
+                sendJson(body);
+            }
         });
         return res;
     };

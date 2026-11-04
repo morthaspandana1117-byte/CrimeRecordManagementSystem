@@ -190,6 +190,179 @@ test('login accepts a valid password and returns a signed token', async (t) => {
   assert.equal(sign.mock.calls.length, 1);
 });
 
+test('login returns an explicit service-unavailable response when its audit event cannot be persisted', async (t) => {
+  const bcrypt = require('bcryptjs');
+  const jwt = require('jsonwebtoken');
+  const User = require('../models/User');
+  const auditService = require('../services/auditService');
+  const user = {
+    _id: 'user-audit-failure',
+    username: 'audit-failure-user',
+    email: 'audit-failure@example.test',
+    role: 'system_admin',
+    status: 'approved',
+    isActive: true,
+    passwordHash: 'stored-password-hash',
+  };
+
+  t.mock.method(bcrypt, 'compare', async () => true);
+  t.mock.method(User, 'findOne', async () => user);
+  t.mock.method(jwt, 'sign', () => 'should-not-be-returned');
+  t.mock.method(auditService, 'log', async () => {
+    throw new Error('simulated audit failure');
+  });
+
+  const res = createResponse();
+  await login(
+    createRequest({ body: { username: user.username, password: 'correct-password' } }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.error, 'AUDIT_LOGGING_FAILED');
+});
+
+test('resetPassword rolls back the password and reset-token state when audit persistence fails', async (t) => {
+  const User = require('../models/User');
+  const auditService = require('../services/auditService');
+  const originalPasswordHash = 'old-password-hash';
+  const originalResetToken = 'old-reset-token-hash';
+  const originalResetExpiry = new Date(Date.now() + 60_000);
+  const user = {
+    _id: 'reset-audit-failure',
+    role: 'system_admin',
+    isActive: true,
+    status: 'approved',
+    passwordHash: originalPasswordHash,
+    passwordResetToken: originalResetToken,
+    passwordResetExpires: originalResetExpiry,
+    save: async () => {},
+  };
+  const saveCalls = [];
+  user.save = async () => {
+    saveCalls.push({
+      passwordHash: user.passwordHash,
+      passwordResetToken: user.passwordResetToken,
+      passwordResetExpires: user.passwordResetExpires,
+    });
+  };
+
+  t.mock.method(User, 'findOne', () => ({
+    select: async () => user,
+  }));
+  t.mock.method(User, 'updateOne', async (_filter, update) => {
+    if (update.$set?.passwordHash) user.passwordHash = update.$set.passwordHash;
+    if (update.$set?.passwordResetToken) user.passwordResetToken = update.$set.passwordResetToken;
+    if (update.$set?.passwordResetExpires) user.passwordResetExpires = update.$set.passwordResetExpires;
+    if (update.$unset?.passwordResetToken) user.passwordResetToken = undefined;
+    if (update.$unset?.passwordResetExpires) user.passwordResetExpires = undefined;
+    return { matchedCount: 1 };
+  });
+  t.mock.method(auditService, 'isTransactionCapableTopology', async () => false);
+  t.mock.method(auditService, 'log', async () => {
+    throw new Error('simulated audit failure');
+  });
+
+  const res = createResponse();
+  await resetPassword(
+    createRequest({
+      params: { token: 'valid-reset-token' },
+      body: { password: 'new-password', confirmPassword: 'new-password' },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.error, 'AUDIT_LOGGING_FAILED');
+  assert.equal(user.passwordHash, originalPasswordHash);
+  assert.equal(user.passwordResetToken, originalResetToken);
+  assert.equal(user.passwordResetExpires, originalResetExpiry);
+  assert.equal(saveCalls.length, 0);
+});
+
+test('resetPassword allows only one concurrent request to consume a reset token', async (t) => {
+  const User = require('../models/User');
+  const auditService = require('../services/auditService');
+  const user = {
+    _id: new (require('mongoose').Types.ObjectId)(),
+    role: 'system_admin',
+    isActive: true,
+    status: 'approved',
+    passwordHash: 'old-password-hash',
+    passwordResetToken: require('crypto').createHash('sha256').update('one-time-token').digest('hex'),
+    passwordResetExpires: new Date(Date.now() + 60_000),
+  };
+  let updateCount = 0;
+  t.mock.method(User, 'findOne', () => ({
+    select: async () => ({ ...user }),
+  }));
+  t.mock.method(User, 'updateOne', async () => {
+    updateCount += 1;
+    return { matchedCount: updateCount === 1 ? 1 : 0 };
+  });
+  t.mock.method(auditService, 'isTransactionCapableTopology', async () => false);
+  t.mock.method(auditService, 'log', async () => undefined);
+
+  const makeRequest = () => createRequest({
+    params: { token: 'one-time-token' },
+    body: { password: 'new-password', confirmPassword: 'new-password' },
+  });
+  const [first, second] = await Promise.all([
+    resetPassword(makeRequest(), createResponse()),
+    resetPassword(makeRequest(), createResponse()),
+  ]);
+
+  assert.deepEqual([first.statusCode, second.statusCode].sort(), [200, 400]);
+  assert.equal(updateCount, 2);
+});
+
+test('standalone reset rollback does not overwrite a newer account update', async (t) => {
+  const User = require('../models/User');
+  const auditService = require('../services/auditService');
+  const originalPasswordHash = 'old-password-hash';
+  const user = {
+    _id: new (require('mongoose').Types.ObjectId)(),
+    role: 'system_admin',
+    isActive: true,
+    status: 'approved',
+    passwordHash: originalPasswordHash,
+    passwordResetToken: require('crypto').createHash('sha256').update('concurrent-token').digest('hex'),
+    passwordResetExpires: new Date(Date.now() + 60_000),
+  };
+  let updateCount = 0;
+  t.mock.method(User, 'findOne', () => ({
+    select: async () => ({ ...user }),
+  }));
+  t.mock.method(User, 'updateOne', async (_filter, update) => {
+    updateCount += 1;
+    if (updateCount === 1) {
+      user.passwordHash = update.$set.passwordHash;
+      user.passwordResetToken = undefined;
+      user.passwordResetExpires = undefined;
+      return { matchedCount: 1 };
+    }
+    user.passwordHash = 'newer-password-hash';
+    return { matchedCount: 0 };
+  });
+  t.mock.method(auditService, 'isTransactionCapableTopology', async () => false);
+  t.mock.method(auditService, 'log', async () => {
+    throw new Error('simulated audit failure');
+  });
+
+  const res = createResponse();
+  await resetPassword(
+    createRequest({
+      params: { token: 'concurrent-token' },
+      body: { password: 'new-password', confirmPassword: 'new-password' },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 503);
+  assert.equal(user.passwordHash, 'newer-password-hash');
+  assert.equal(updateCount, 2);
+});
+
 test('login rejects an incorrect password without issuing a token', async (t) => {
   const bcrypt = require('bcryptjs');
   const jwt = require('jsonwebtoken');
@@ -250,4 +423,3 @@ test('resetPassword returns 400 when the reset token is invalid', async (t) => {
   assert.equal(res.statusCode, 400);
   assert.equal(res.body.error, 'INVALID_RESET_TOKEN');
 });
-

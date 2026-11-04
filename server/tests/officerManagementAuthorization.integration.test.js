@@ -3,13 +3,17 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { mock } = require("node:test");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "officer-management-authorization-test-secret";
 
 const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const AuditLog = require("../models/AuditLog");
+const auditService = require("../services/auditService");
+const { deleteOfficer } = require("../controllers/officerController");
 const { classifyOfficerRank } = require("../scripts/migrateOfficerRanks");
 const {
     normalizeOfficerRank,
@@ -50,7 +54,7 @@ const createPendingOfficer = async (username, officerId, badgeNumber) => {
 };
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-officer-management"));
     app = createApp();
     passwordHash = await bcrypt.hash("Management@123", 10);
@@ -227,6 +231,20 @@ test("system admin handles approval and account status, not police profile edits
         .set("Authorization", `Bearer ${tokens.admin}`)
         .send({ accountStatus: "inactive" });
     assert.equal(deactivate.status, 200);
+    const deactivationEvents = await AuditLog.find({
+        entityId: officers.constable._id,
+        action: "OFFICER_ACCOUNT_STATUS_CHANGED",
+    }).lean();
+    assert.ok(deactivationEvents.some((event) =>
+        event.changes.before.status === "active" &&
+        event.changes.after.status === "inactive" &&
+        event.changes.before.isActive === true &&
+        event.changes.after.isActive === false
+    ));
+    assert.equal(await AuditLog.countDocuments({
+        entityId: officers.constable._id,
+        action: "OFFICER_DELETED",
+    }), 0);
     const blockedLogin = await request(app)
         .post("/api/auth/login")
         .send({ username: users.constable.username, password: "Management@123" });
@@ -330,6 +348,7 @@ test("account status changes follow subordinate rank and update only status fiel
                 passwordResetExpires: "2030-01-01",
                 audit: { actor: "forged" },
             });
+
         assert.equal(deactivate.status, 200, rank);
         const inactiveOfficer = await Officer.findById(officers[rank]._id).lean();
         const inactiveUser = await User.findById(users[rank]._id).lean();
@@ -410,6 +429,79 @@ test("account status changes follow subordinate rank and update only status fiel
         .send({ username: users.si.username, password: "Management@123" });
     assert.equal(restoredLogin.status, 200);
     assert.equal((await Officer.findById(officers.si._id)).rank, "SI");
+});
+
+test("account status audit failure rolls back both officer and user updates", async () => {
+    const officerBefore = await Officer.findById(officers.constable._id).lean();
+    const userBefore = await User.findById(users.constable._id).lean();
+    mock.method(auditService, "log", async () => {
+        throw new Error("simulated account status audit failure");
+    });
+
+    try {
+        const response = await request(app)
+            .patch(`/api/officers/${officers.constable._id}/status`)
+            .set("Authorization", "Bearer " + tokens.admin)
+            .send({ accountStatus: "inactive" });
+        assert.equal(response.status, 500);
+        assert.equal((await Officer.findById(officers.constable._id)).status, officerBefore.status);
+        assert.equal((await User.findById(users.constable._id)).isActive, userBefore.isActive);
+    } finally {
+        mock.restoreAll();
+    }
+});
+
+test("deactivation rechecks authorization against the fresh officer rank", async () => {
+    const target = await Officer.findById(officers.constable._id).lean();
+    const targetUser = await User.findById(target.userId).lean();
+    const originalFindById = Officer.findById;
+    let findCount = 0;
+    mock.method(Officer, "findById", (id) => {
+        findCount += 1;
+        if (findCount === 1) return originalFindById.call(Officer, id);
+        return {
+            session: async () => ({
+                ...target,
+                rank: "sp",
+                save: async () => {},
+            }),
+        };
+    });
+
+    const response = {
+        statusCode: null,
+        body: null,
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json(body) {
+            this.body = body;
+            return this;
+        },
+    };
+
+    try {
+        await deleteOfficer({
+            params: { id: String(target._id) },
+            authority: {
+                systemRole: "officer",
+                managementRank: "inspector",
+                user: { _id: targetUser._id },
+            },
+            user: { userId: targetUser._id },
+            method: "PATCH",
+            baseUrl: "/api/officers",
+            path: `/${target._id}/deactivate`,
+        }, response);
+    } finally {
+        mock.restoreAll();
+    }
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.body.error, "OFFICER_MANAGEMENT_DENIED");
+    assert.equal((await Officer.findById(target._id)).status, target.status);
+    assert.equal((await User.findById(targetUser._id)).isActive, targetUser.isActive);
 });
 
 test("ambiguous investigating_officer rank remains unresolved during migration classification", () => {

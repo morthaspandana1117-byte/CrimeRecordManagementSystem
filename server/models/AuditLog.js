@@ -15,6 +15,11 @@ const auditLogSchema = new mongoose.Schema(
             method: { type: String, immutable: true },
             path: { type: String, immutable: true },
         },
+        integrity: {
+            sequence: { type: Number, immutable: true },
+            previousHash: { type: String, immutable: true },
+            hash: { type: String, immutable: true },
+        },
     },
     { timestamps: false, versionKey: false, strict: true },
 );
@@ -35,5 +40,6 @@ auditLogSchema.pre("deleteOne", { document: true, query: false }, function preve
 auditLogSchema.index({ occurredAt: -1 });
 auditLogSchema.index({ entityType: 1, entityId: 1, occurredAt: -1 });
 auditLogSchema.index({ actor: 1, occurredAt: -1 });
+auditLogSchema.index({ "integrity.sequence": 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model("AuditLog", auditLogSchema);
