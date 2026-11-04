@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
-import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, downloadEvidenceHistoryReport, getCaseById, getCaseTimeline, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, downloadEvidenceHistoryReport, getCaseById, getCaseRelationships, getCaseTimeline, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
 import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceReportButtonLabel, evidenceReportErrorMessage, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename, triggerEvidenceReportDownload } from '../utils/evidenceFiles'
 import { isSectionExpanded, toggleSectionId } from '../utils/collapsibleSections'
 import { timelineEventActor, timelineEventTitle, timelineItemsFromResponse, timelinePaginationFromResponse } from '../utils/caseTimeline'
+import { relationshipDisclaimer, relationshipItemsFromResponse, relationshipPaginationFromResponse, relationshipReasonLabel } from '../utils/caseRelationships'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -38,6 +39,14 @@ function CaseDetails() {
   const [caseHistoryError, setCaseHistoryError] = useState('')
   const [caseHistoryExpanded, setCaseHistoryExpanded] = useState(false)
   const [timelinePagination, setTimelinePagination] = useState({ page: 1, limit: 20, totalRecords: 0, totalPages: 1 })
+  const [relatedCases, setRelatedCases] = useState([])
+  const [relatedCasesError, setRelatedCasesError] = useState('')
+  const [relatedCasesExpanded, setRelatedCasesExpanded] = useState(false)
+  const [relatedCasesLoaded, setRelatedCasesLoaded] = useState(false)
+  const [relatedCasesLoading, setRelatedCasesLoading] = useState(false)
+  const [relatedCasesPagination, setRelatedCasesPagination] = useState({ page: 1, limit: 20, totalRecords: 0, totalPages: 1 })
+  const relatedCasesRequestInFlight = useRef(null)
+  const relatedCasesRequestGeneration = useRef(0)
   const [reopening, setReopening] = useState(false)
   const [showReopenDialog, setShowReopenDialog] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
@@ -120,6 +129,43 @@ function CaseDetails() {
     } catch (requestError) {
       setCaseHistoryError(message(requestError, 'Case timeline could not be loaded.'))
     }
+  }
+
+  const loadRelatedCasesPage = async (page = 1) => {
+    const requestCaseId = id
+    const requestGeneration = relatedCasesRequestGeneration.current
+    const isCurrentRequest = () => (
+      relatedCasesRequestGeneration.current === requestGeneration &&
+      requestCaseId === id
+    )
+    if (
+      relatedCasesRequestInFlight.current?.caseId === requestCaseId &&
+      relatedCasesRequestInFlight.current.generation === requestGeneration
+    ) return
+    relatedCasesRequestInFlight.current = { caseId: requestCaseId, generation: requestGeneration }
+    setRelatedCasesLoading(true)
+    setRelatedCasesError('')
+    try {
+      const response = await getCaseRelationships(requestCaseId, { page, limit: relatedCasesPagination.limit })
+      if (!isCurrentRequest()) return
+      setRelatedCases(relationshipItemsFromResponse(response))
+      setRelatedCasesPagination(relationshipPaginationFromResponse(response))
+      setRelatedCasesLoaded(true)
+    } catch (requestError) {
+      if (!isCurrentRequest()) return
+      setRelatedCasesError(message(requestError, 'Related cases could not be loaded.'))
+    } finally {
+      if (isCurrentRequest()) {
+        relatedCasesRequestInFlight.current = null
+        setRelatedCasesLoading(false)
+      }
+    }
+  }
+
+  const toggleRelatedCases = () => {
+    const shouldExpand = !relatedCasesExpanded
+    setRelatedCasesExpanded(shouldExpand)
+    if (shouldExpand && !relatedCasesLoaded) loadRelatedCasesPage()
   }
 
   const openReopenDialog = () => {
@@ -337,6 +383,17 @@ function CaseDetails() {
     return () => window.clearTimeout(timer)
   }, [load, location.key])
 
+  useEffect(() => {
+    relatedCasesRequestGeneration.current += 1
+    relatedCasesRequestInFlight.current = null
+    setRelatedCases([])
+    setRelatedCasesError('')
+    setRelatedCasesExpanded(false)
+    setRelatedCasesLoaded(false)
+    setRelatedCasesLoading(false)
+    setRelatedCasesPagination({ page: 1, limit: 20, totalRecords: 0, totalPages: 1 })
+  }, [id])
+
   if (loading) {
     return <main className="page-loader" aria-label="Loading case"><div className="spinner-border text-primary" role="status" /><span className="mt-3">Loading case details...</span></main>
   }
@@ -524,6 +581,31 @@ function CaseDetails() {
                 </div>
                 )) : <p className="mb-0">No case timeline events recorded yet.</p>}
                 {caseHistory.length > 0 && timelinePagination.totalPages > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><button className="btn btn-sm btn-outline-primary" disabled={timelinePagination.page <= 1} onClick={() => loadTimelinePage(timelinePagination.page - 1)} type="button">Previous</button><span className="small text-secondary">Page {timelinePagination.page} of {timelinePagination.totalPages}</span><button className="btn btn-sm btn-outline-primary" disabled={timelinePagination.page >= timelinePagination.totalPages} onClick={() => loadTimelinePage(timelinePagination.page + 1)} type="button">Next</button></div>}
+              </div>}
+            </div>
+            <div className="fir-detail-card mt-4">
+              <div className="detail-section-header d-flex align-items-center justify-content-between gap-3">
+                <h3 className="mb-0">Related Cases</h3>
+                <button className="btn btn-sm btn-outline-secondary" aria-expanded={relatedCasesExpanded} aria-controls="related-cases-panel" onClick={toggleRelatedCases} type="button">
+                  {relatedCasesExpanded ? 'Hide Related Cases' : 'Show Related Cases'}
+                </button>
+              </div>
+              {relatedCasesExpanded && <div id="related-cases-panel">
+                <p className="small text-secondary mt-3">{relationshipDisclaimer}</p>
+                {relatedCasesLoading && <p role="status">Loading related cases...</p>}
+                {relatedCasesError && <div className="alert alert-warning d-flex justify-content-between align-items-center gap-3" role="alert"><span>{relatedCasesError}</span><button className="btn btn-sm btn-outline-primary" onClick={() => loadRelatedCasesPage(relatedCasesPagination.page)} type="button">Retry</button></div>}
+                {!relatedCasesLoading && !relatedCasesError && (relatedCases.length ? relatedCases.map((relatedCase) => (
+                  <div className="border rounded p-3 mb-2" key={String(relatedCase.caseId)}>
+                    <div className="d-flex justify-content-between gap-3 align-items-center flex-wrap">
+                      <strong>{relatedCase.caseNo || 'Case number unavailable'}</strong>
+                      <span className="small text-secondary">{displayValue(relatedCase.status)}</span>
+                    </div>
+                    <div>{displayValue(relatedCase.title)}</div>
+                    <div className="small text-secondary">{(relatedCase.reasons || []).map(relationshipReasonLabel).join(' · ')}</div>
+                    <button className="btn btn-sm btn-outline-primary mt-2" onClick={() => navigate(`/cases/${relatedCase.caseId}`)} type="button">Open Case</button>
+                  </div>
+                )) : <p className="mb-0">No related cases identified.</p>)}
+                {!relatedCasesLoading && !relatedCasesError && relatedCases.length > 0 && relatedCasesPagination.totalPages > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><button className="btn btn-sm btn-outline-primary" disabled={relatedCasesPagination.page <= 1} onClick={() => loadRelatedCasesPage(relatedCasesPagination.page - 1)} type="button">Previous</button><span className="small text-secondary">Page {relatedCasesPagination.page} of {relatedCasesPagination.totalPages}</span><button className="btn btn-sm btn-outline-primary" disabled={relatedCasesPagination.page >= relatedCasesPagination.totalPages} onClick={() => loadRelatedCasesPage(relatedCasesPagination.page + 1)} type="button">Next</button></div>}
               </div>}
             </div>
             {record.investigationHistory?.length > 0 && <div className="fir-detail-card mt-4"><div className="detail-section-header"><h3>Investigation History</h3></div>{record.investigationHistory.map((round) => { const roundEvidence = evidence.filter((item) => item.investigationRound === round.round); return <div className="border rounded p-3 mb-3" key={round.round}><strong>Investigation Round {round.round}</strong><div className="small text-secondary">Started: {date(round.startedAt)} · Closed: {date(round.closedAt)} · {displayValue(round.status)}</div>{round.reopenReason && <div>Reason: {round.reopenReason}</div>}<div className="mt-2">{roundEvidence.length ? roundEvidence.map((item) => <div key={item._id}>{item.evidenceId} · {item.type}</div>) : 'No evidence recorded in this round.'}</div></div> })}</div>}

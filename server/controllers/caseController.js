@@ -5,6 +5,7 @@ const Criminal = require("../models/Criminal");
 const CaseHistory = require("../models/CaseHistory");
 const Evidence = require("../models/Evidence");
 const AuditLog = require("../models/AuditLog");
+const { analyzeCaseRelationships, normalizeRules } = require("../services/caseRelationshipService");
 const {
     isValidObjectId,
     isNonEmptyString,
@@ -1063,6 +1064,58 @@ const getCaseTimeline = async (req, res) => {
     }
 };
 
+const getCaseRelationships = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
+        }
+
+        const pageValue = req.query.page ?? "1";
+        const limitValue = req.query.limit ?? "20";
+        const isStrictPositiveInteger = (value) => typeof value === "string" && /^[1-9]\d*$/.test(value);
+        const page = Number(pageValue);
+        const limit = Number(limitValue);
+        if (!isStrictPositiveInteger(pageValue) || !Number.isSafeInteger(page)) {
+            return invalid(res, "page must be a positive integer", "INVALID_PAGE");
+        }
+        if (!isStrictPositiveInteger(limitValue) || !Number.isSafeInteger(limit) || limit > 100) {
+            return invalid(res, "limit must be an integer between 1 and 100", "INVALID_LIMIT");
+        }
+
+        const selectedRules = normalizeRules(req.query.rules ?? ["criminal", "evidence_hash"]);
+        if (selectedRules.some((rule) => !["criminal", "evidence_hash"].includes(rule))) {
+            return invalid(res, "Unsupported relationship rule", "INVALID_RELATIONSHIP_RULE");
+        }
+        if (!selectedRules.length) {
+            return invalid(res, "At least one relationship rule is required", "INVALID_RELATIONSHIP_RULE");
+        }
+
+        const result = await analyzeCaseRelationships({
+            caseId: req.params.id,
+            authority: req.authority,
+            rules: selectedRules,
+            page,
+            limit,
+        });
+        if (result.notFound) return notFound(res, "Case");
+        if (result.forbidden) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only analyze cases you are authorized to access",
+                error: "CASE_RELATIONSHIP_ACCESS_DENIED",
+            });
+        }
+        return res.status(200).json({
+            success: true,
+            count: result.data.length,
+            pagination: result.pagination,
+            data: result.data,
+        });
+    } catch (error) {
+        return handleError(res, error, "Get case relationships error");
+    }
+};
+
 module.exports = {
     createCase,
     getAllCases,
@@ -1074,6 +1127,7 @@ module.exports = {
     deleteCase,
     getCaseHistory,
     getCaseTimeline,
+    getCaseRelationships,
     appendCaseHistory,
     normalizeCaseStatus,
     validateCaseStatus,
