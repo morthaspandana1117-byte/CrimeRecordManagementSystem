@@ -34,35 +34,35 @@ test("audit create retry accepts only an existing record with matching identity 
     assert.equal(await auditService.log(args), existing);
 });
 
-test("audit create retry propagates its original error when the existing record mismatches", async (t) => {
+test("audit creation failure propagates when the existing record mismatches", async (t) => {
     const args = auditArguments();
-    const creationError = new Error("audit create failed");
     const mismatched = {
         _id: args.auditId,
         entityId: new mongoose.Types.ObjectId(),
         entityType: args.entityType,
         action: args.action,
     };
-    t.mock.method(AuditLog, "create", async () => { throw creationError; });
     t.mock.method(AuditLog, "findById", () => ({
         select: () => ({ lean: async () => mismatched }),
     }));
 
-    await assert.rejects(auditService.log(args), (error) => error === creationError);
+    await assert.rejects(
+        auditService.log(args),
+        (error) => error.code === "AUDIT_TRANSACTION_REQUIRED",
+    );
 });
 
-test("standalone audit writes remain legacy records without integrity metadata", async (t) => {
+test("standalone audit writes fail closed instead of creating unprotected records", async (t) => {
     const args = auditArguments();
-    let createdEntry;
     t.mock.method(auditService, "isTransactionCapableTopology", async () => false);
-    t.mock.method(AuditLog, "create", async (entry) => {
-        createdEntry = entry;
-        return entry;
-    });
+    t.mock.method(AuditLog, "findById", () => ({
+        select: () => ({ lean: async () => null }),
+    }));
 
-    await auditService.log(args);
-
-    assert.equal(createdEntry.integrity, undefined);
+    await assert.rejects(
+        auditService.log(args),
+        (error) => error.code === "AUDIT_TRANSACTION_REQUIRED",
+    );
 });
 
 test("transient transaction conflicts are retried by the transaction runner", async (t) => {

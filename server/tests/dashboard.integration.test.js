@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "dashboard-integration-test-secret";
 
@@ -22,7 +22,7 @@ let officers;
 let users;
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-dashboard"));
     app = createApp();
 

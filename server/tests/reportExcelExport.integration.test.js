@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
 const ExcelJS = require("exceljs");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "report-excel-integration-test-secret";
 
@@ -113,7 +113,7 @@ const createCase = (key, firId, assignedOfficerIds, startDate) => Case.create({
 });
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-report-excel"));
     app = createApp();
 

@@ -999,7 +999,7 @@ const downloadEvidence = async (req, res) => {
         }
 
         evidence = await Evidence.findById(req.params.id)
-            .select("caseId evidenceId fileUrl fileName mimeType +storedFilename");
+            .select("caseId evidenceId fileUrl fileName mimeType fileHash +storedFilename");
         if (!evidence) {
             await recordDownloadAudit("evidence_not_found");
             return notFound(res, "Evidence");
@@ -1021,6 +1021,34 @@ const downloadEvidence = async (req, res) => {
                 success: false,
                 message: "No evidence file is attached for this record",
                 error: "EVIDENCE_FILE_NOT_FOUND",
+            });
+        }
+
+        let storedHash;
+        try {
+            storedHash = await evidenceFileService.hashStoredFile(evidence.storedFilename);
+        } catch (error) {
+            if (error.code === "ENOENT" || error.code === "EINVALIDTYPE" || error.code === "ELOOP") {
+                await recordDownloadAudit(error.code === "ENOENT" ? "file_missing" : "invalid_stored_file");
+                return res.status(404).json({ success: false, message: "Evidence file not found", error: "EVIDENCE_FILE_NOT_FOUND" });
+            }
+            await recordDownloadAudit("storage_error");
+            return res.status(500).json({ success: false, message: "Server error", error: "SERVER_ERROR" });
+        }
+        if (!evidence.fileHash) {
+            await recordDownloadAudit("integrity_unavailable");
+            return res.status(409).json({
+                success: false,
+                message: "Evidence file integrity cannot be verified",
+                error: "EVIDENCE_HASH_UNAVAILABLE",
+            });
+        }
+        if (storedHash !== evidence.fileHash) {
+            await recordDownloadAudit("integrity_failed");
+            return res.status(409).json({
+                success: false,
+                message: "Evidence file integrity verification failed",
+                error: "EVIDENCE_FILE_MODIFIED",
             });
         }
 

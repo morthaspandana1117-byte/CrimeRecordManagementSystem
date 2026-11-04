@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "integration-test-secret";
 
@@ -56,7 +56,7 @@ const evidenceSnapshot = async () =>
     Evidence.find({ caseId: global.caseId }).sort({ evidenceId: 1 }).lean();
 
  test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri("crms-evidence-lifecycle");
     if (!mongoUri.startsWith("mongodb://127.0.0.1") && !mongoUri.startsWith("mongodb://localhost")) {
         throw new Error("Integration test did not receive an isolated MongoDB URI");

@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 const request = require("supertest");
-const { MongoMemoryServer } = require("mongodb-memory-server");
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 
 process.env.JWT_SECRET = "crime-statistics-integration-test-secret";
 
@@ -67,7 +67,7 @@ const createFIR = (registeredBy, data) => FIR.create({
 });
 
 test.before(async () => {
-    mongoServer = await MongoMemoryServer.create();
+    mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri("crms-crime-statistics");
     if (!mongoUri.startsWith("mongodb://127.0.0.1") && !mongoUri.startsWith("mongodb://localhost")) {
         throw new Error("Crime statistics test did not receive an isolated MongoDB URI");
