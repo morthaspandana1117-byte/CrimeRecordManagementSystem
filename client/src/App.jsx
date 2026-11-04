@@ -24,6 +24,7 @@ import OfficerEdit from './pages/OfficerEdit'
 import OfficerManagement from './pages/OfficerManagement'
 import Register from './pages/Register'
 import Reports from './pages/Reports'
+import AdvancedSearch from './pages/AdvancedSearch'
 import ResetPassword from './pages/ResetPassword'
 import { officerRanks, seniorOfficerManagementRanks, seniorOfficerRanks } from './authority'
 
@@ -43,6 +44,7 @@ function App() {
       <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute allowedRanks={officerRanks}><Reports /></ProtectedRoute>} />
+      <Route path="/search" element={<ProtectedRoute allowedRanks={officerRanks}><AdvancedSearch /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/admin/audit-logs" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AuditLogs /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
