@@ -69,6 +69,7 @@ export const updateFIRStatus = (id, status) => api.patch(`/firs/${id}/status`, {
 export const getCases = (params = {}) => api.get('/cases', { params })
 export const getCaseById = (id) => api.get(`/cases/${id}`)
 export const getCaseHistory = (id) => api.get(`/cases/${id}/history`)
+export const getCaseTimeline = (id, params = {}) => api.get(`/cases/${id}/timeline`, { params })
 export const createCase = (caseRecord) => api.post('/cases', caseRecord)
 export const updateCase = (id, caseRecord) => api.put(`/cases/${id}`, caseRecord)
 export const updateCaseStatus = (id, status, details = {}) => api.patch(`/cases/${id}/status`, { ...details, status })

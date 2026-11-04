@@ -3,6 +3,8 @@ const FIR = require("../models/FIR");
 const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
 const CaseHistory = require("../models/CaseHistory");
+const Evidence = require("../models/Evidence");
+const AuditLog = require("../models/AuditLog");
 const {
     isValidObjectId,
     isNonEmptyString,
@@ -904,6 +906,163 @@ const getCaseHistory = async (req, res) => {
     }
 };
 
+const timelineHistoryEvents = {
+    case_created: { title: "Case created", description: "The case was created." },
+    case_updated: { title: "Case details updated", description: "Case details were updated." },
+    officer_assigned: { title: "Officer assigned", description: "An officer was assigned to the case." },
+    officer_unassigned: { title: "Officer unassigned", description: "An officer was unassigned from the case." },
+    case_status_changed: { title: "Case status changed", description: "The case status changed." },
+    case_reopened: { title: "Case reopened", description: "The case was reopened." },
+    evidence_added: { title: "Evidence added", description: "Evidence was added to the case." },
+    evidence_status_changed: { title: "Evidence status changed", description: "Evidence status changed." },
+    evidence_verified: { title: "Evidence verified", description: "Evidence was verified." },
+    evidence_verification_rejected: { title: "Evidence verification rejected", description: "Evidence verification was rejected." },
+};
+
+const timelineAuditEvents = {
+    CASE_CREATED: { category: "case", title: "Case created", description: "The case was created." },
+    CASE_UPDATED: { category: "case", title: "Case details updated", description: "Case details were updated." },
+    CASE_STATUS_CHANGED: { category: "case", title: "Case status changed", description: "The case status changed." },
+    CASE_REOPENED: { category: "case", title: "Case reopened", description: "The case was reopened." },
+    FIR_CREATED: { category: "fir", title: "FIR created", description: "The related FIR was created." },
+    FIR_UPDATED: { category: "fir", title: "FIR updated", description: "The related FIR was updated." },
+    FIR_STATUS_CHANGED: { category: "fir", title: "FIR status changed", description: "The related FIR status changed." },
+    EVIDENCE_CREATED: { category: "evidence", title: "Evidence added", description: "Evidence was added to the case." },
+    EVIDENCE_UPDATED: { category: "evidence", title: "Evidence updated", description: "Evidence details were updated." },
+    EVIDENCE_FILE_UPLOADED: { category: "evidence", title: "Evidence file uploaded", description: "An evidence file was uploaded." },
+    EVIDENCE_STATUS_CHANGED: { category: "evidence", title: "Evidence status changed", description: "Evidence status changed." },
+    EVIDENCE_VERIFIED: { category: "evidence", title: "Evidence verified", description: "Evidence was verified." },
+    EVIDENCE_REJECTED: { category: "evidence", title: "Evidence verification rejected", description: "Evidence verification was rejected." },
+    EVIDENCE_CUSTODY_TRANSFERRED: { category: "evidence", title: "Evidence custody transferred", description: "Evidence custody was transferred." },
+};
+
+const duplicateAuditActionForHistory = {
+    case_created: "CASE_CREATED",
+    case_updated: "CASE_UPDATED",
+    case_status_changed: "CASE_STATUS_CHANGED",
+    case_reopened: "CASE_REOPENED",
+};
+
+const timelineHistoryEvent = (entry) => {
+    const mapped = timelineHistoryEvents[entry.actionType];
+    return {
+        _id: String(entry._id),
+        source: "case-history",
+        entityId: String(entry.caseId),
+        category: "case",
+        action: entry.actionType,
+        title: mapped?.title || "Case activity",
+        description: entry.description || mapped?.description || "A case activity was recorded.",
+        actorId: entry.performedBy?._id ? String(entry.performedBy._id) : null,
+        actor: entry.performedByOfficer?.name || entry.performedBy?.username || entry.performedByRole || "Unknown actor",
+        timestamp: entry.timestamp,
+    };
+};
+
+const timelineAuditEvent = (entry) => {
+    const mapped = timelineAuditEvents[entry.action];
+    return {
+        _id: String(entry._id),
+        source: "audit",
+        entityId: String(entry.entityId),
+        category: mapped?.category || entry.entityType.toLowerCase(),
+        action: entry.action,
+        title: mapped?.title || "Recorded activity",
+        description: mapped?.description || "A related record activity was recorded.",
+        actorId: entry.actor?._id ? String(entry.actor._id) : null,
+        actor: entry.actor?.username || "Unknown actor",
+        timestamp: entry.occurredAt,
+    };
+};
+
+const isDuplicateTimelinePair = (historyEvent, auditEvent) => (
+    historyEvent.entityId === auditEvent.entityId &&
+    historyEvent.actorId &&
+    historyEvent.actorId === auditEvent.actorId &&
+    duplicateAuditActionForHistory[historyEvent.action] === auditEvent.action &&
+    Math.abs(new Date(historyEvent.timestamp) - new Date(auditEvent.timestamp)) <= 5000
+);
+
+const getCaseTimeline = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid case ID", "INVALID_CASE_ID");
+        }
+
+        const record = await Case.findById(req.params.id).select("assignedOfficerIds firId");
+        if (!record) return notFound(res, "Case");
+        if (!canAccessCase(req, record)) {
+            return res.status(403).json({
+                success: false,
+                message: "You may only view timelines for cases you are authorized to access",
+                error: "CASE_TIMELINE_ACCESS_DENIED",
+            });
+        }
+
+        const pageValue = req.query.page ?? "1";
+        const limitValue = req.query.limit ?? "20";
+        const isStrictPositiveInteger = (value) => typeof value === "string" && /^[1-9]\d*$/.test(value);
+        const page = Number(pageValue);
+        const limit = Number(limitValue);
+        if (!isStrictPositiveInteger(pageValue) || !Number.isSafeInteger(page)) {
+            return invalid(res, "page must be a positive integer", "INVALID_PAGE");
+        }
+        if (!isStrictPositiveInteger(limitValue) || !Number.isSafeInteger(limit) || limit > 100) {
+            return invalid(res, "limit must be an integer between 1 and 100", "INVALID_LIMIT");
+        }
+
+        const [evidenceIds, relatedFir] = await Promise.all([
+            Evidence.find({ caseId: record._id }).select("_id").lean(),
+            FIR.findById(record.firId).select("registeredBy").lean(),
+        ]);
+        const canAccessRelatedFir = relatedFir && canAccessAssignedRecord(req.authority, [relatedFir.registeredBy]);
+        const relatedIds = [
+            record._id,
+            ...(canAccessRelatedFir ? [record.firId] : []),
+            ...evidenceIds.map((item) => item._id),
+        ].filter(Boolean);
+        const [history, audits] = await Promise.all([
+            CaseHistory.find({ caseId: record._id })
+                .select("caseId actionType description performedBy performedByOfficer performedByRole performedByRank timestamp")
+                .populate("performedBy", "username")
+                .populate("performedByOfficer", "name officerId rank")
+                .lean(),
+            AuditLog.find({
+                entityType: { $in: ["Case", "FIR", "Evidence"] },
+                entityId: { $in: relatedIds },
+            })
+                .select("actor action entityType entityId occurredAt")
+                .populate("actor", "username")
+                .lean(),
+        ]);
+
+        const historyEvents = history.map(timelineHistoryEvent);
+        const auditEvents = audits.map(timelineAuditEvent);
+        const duplicateAuditIds = new Set(
+            auditEvents
+                .filter((auditEvent) => historyEvents.some((historyEvent) => isDuplicateTimelinePair(historyEvent, auditEvent)))
+                .map((auditEvent) => auditEvent._id),
+        );
+        const events = [...historyEvents, ...auditEvents.filter((event) => !duplicateAuditIds.has(event._id))]
+            .sort((left, right) => {
+                const timestampDifference = new Date(right.timestamp) - new Date(left.timestamp);
+                return timestampDifference || right._id.localeCompare(left._id);
+            });
+        const totalRecords = events.length;
+        const totalPages = Math.max(1, Math.ceil(totalRecords / limit));
+        const data = events.slice((page - 1) * limit, page * limit);
+
+        return res.status(200).json({
+            success: true,
+            count: data.length,
+            pagination: { page, limit, totalRecords, totalPages },
+            data,
+        });
+    } catch (error) {
+        return handleError(res, error, "Get case timeline error");
+    }
+};
+
 module.exports = {
     createCase,
     getAllCases,
@@ -914,6 +1073,7 @@ module.exports = {
     reopenCase,
     deleteCase,
     getCaseHistory,
+    getCaseTimeline,
     appendCaseHistory,
     normalizeCaseStatus,
     validateCaseStatus,

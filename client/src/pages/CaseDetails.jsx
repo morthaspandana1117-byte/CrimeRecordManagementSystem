@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getRank, seniorOfficerRanks, isSeniorOfficer, canCheckEvidenceIntegrity } from '../authority'
-import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, downloadEvidenceHistoryReport, getCaseById, getCaseHistory, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
+import { acknowledgeEvidenceCustodyTransfer, checkEvidenceIntegrity, downloadEvidence, downloadEvidenceHistoryReport, getCaseById, getCaseTimeline, getEvidence, getEvidenceCustodyHistory, getEvidenceHistory, getPendingEvidenceCustodyTransfer, initiateEvidenceCustodyTransfer, reopenCase, updateCaseStatus, verifyEvidence } from '../services/api'
 import { applyEvidenceVerificationResponse, evidenceHistoryDescription, evidenceHistoryItemsFromResponse, evidenceHistoryPaginationFromResponse, evidenceItemsFromResponse, evidenceReportButtonLabel, evidenceReportErrorMessage, evidenceVerificationLabel, hasPrivateEvidenceFile, integrityCheckButtonLabel, integrityCheckErrorMessage, integrityResultLabel, safeEvidenceDownloadFilename, triggerEvidenceReportDownload } from '../utils/evidenceFiles'
 import { isSectionExpanded, toggleSectionId } from '../utils/collapsibleSections'
+import { timelineEventActor, timelineEventTitle, timelineItemsFromResponse, timelinePaginationFromResponse } from '../utils/caseTimeline'
 
 const message = (error, fallback) => error.response?.data?.message || error.response?.data?.error || (error.response ? fallback : 'Unable to reach the CRMS server.')
 const date = (value) => value ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : 'Not available'
@@ -36,6 +37,7 @@ function CaseDetails() {
   const [expandedCustodyIds, setExpandedCustodyIds] = useState([])
   const [caseHistoryError, setCaseHistoryError] = useState('')
   const [caseHistoryExpanded, setCaseHistoryExpanded] = useState(false)
+  const [timelinePagination, setTimelinePagination] = useState({ page: 1, limit: 20, totalRecords: 0, totalPages: 1 })
   const [reopening, setReopening] = useState(false)
   const [showReopenDialog, setShowReopenDialog] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
@@ -94,11 +96,13 @@ function CaseDetails() {
         setEvidenceError(message(requestError, 'Related evidence could not be loaded.'))
       }
       try {
-        const historyResponse = await getCaseHistory(id)
-        setCaseHistory(Array.isArray(historyResponse.data?.data) ? historyResponse.data.data : [])
+        const timelineResponse = await getCaseTimeline(id, { page: 1, limit: 20 })
+        setCaseHistory(timelineItemsFromResponse(timelineResponse))
+        setTimelinePagination(timelinePaginationFromResponse(timelineResponse))
       } catch (requestError) {
         setCaseHistory([])
-        setCaseHistoryError(message(requestError, 'Case history could not be loaded.'))
+        setTimelinePagination({ page: 1, limit: 20, totalRecords: 0, totalPages: 1 })
+        setCaseHistoryError(message(requestError, 'Case timeline could not be loaded.'))
       }
     } catch (requestError) {
       setError(message(requestError, 'Could not load case details.'))
@@ -106,6 +110,17 @@ function CaseDetails() {
       if (showLoading) setLoading(false)
     }
   }, [id, loadCustodyState])
+
+  const loadTimelinePage = async (page) => {
+    try {
+      setCaseHistoryError('')
+      const response = await getCaseTimeline(id, { page, limit: timelinePagination.limit })
+      setCaseHistory(timelineItemsFromResponse(response))
+      setTimelinePagination(timelinePaginationFromResponse(response))
+    } catch (requestError) {
+      setCaseHistoryError(message(requestError, 'Case timeline could not be loaded.'))
+    }
+  }
 
   const openReopenDialog = () => {
     setReopenReason('')
@@ -491,26 +506,24 @@ function CaseDetails() {
             </div>
             <div className="fir-detail-card mt-4">
               <div className="detail-section-header d-flex align-items-center justify-content-between gap-3">
-                <h3 className="mb-0">Case History</h3>
+                <h3 className="mb-0">Case Timeline</h3>
                 <button className="btn btn-sm btn-outline-secondary" aria-expanded={caseHistoryExpanded} aria-controls="case-history-panel" onClick={() => setCaseHistoryExpanded((current) => !current)} type="button">
-                  {caseHistoryExpanded ? 'Hide Case History' : 'Show Case History'}
+                  {caseHistoryExpanded ? 'Hide Case Timeline' : 'Show Case Timeline'}
                 </button>
               </div>
               {caseHistoryExpanded && <div id="case-history-panel">
                 {caseHistoryError && <div className="alert alert-warning" role="alert">{caseHistoryError}</div>}
                 {caseHistory.length ? caseHistory.map((entry) => (
-                <div className="border rounded p-3 mb-2" key={entry._id || `${entry.actionType}-${entry.timestamp}`}>
+                <div className="border rounded p-3 mb-2" key={entry._id || `${entry.action}-${entry.timestamp}`}>
                   <div className="d-flex justify-content-between gap-3 align-items-center flex-wrap">
-                    <strong>{entry.actionType || 'Case event'}</strong>
-                    <span className="small text-secondary">{date(entry.timestamp)}</span>
+                    <strong>{timelineEventTitle(entry)}</strong>
+                    <span className="small text-secondary">{dateTime(entry.timestamp)}</span>
                   </div>
                   <div>{entry.description}</div>
-                  {entry.performedBy?.username && <div className="small text-secondary">By {entry.performedBy.username}</div>}
-                  {entry.performedByRank && <div className="small text-secondary">Role: {entry.performedByRank}</div>}
-                  {entry.previousValue && <div className="small text-secondary">Previous: {JSON.stringify(entry.previousValue)}</div>}
-                  {entry.newValue && <div className="small text-secondary">Updated: {JSON.stringify(entry.newValue)}</div>}
+                  <div className="small text-secondary">By {timelineEventActor(entry)} · Category: {entry.category || 'case'}</div>
                 </div>
-                )) : <p className="mb-0">No case history recorded yet.</p>}
+                )) : <p className="mb-0">No case timeline events recorded yet.</p>}
+                {caseHistory.length > 0 && timelinePagination.totalPages > 1 && <div className="d-flex justify-content-between align-items-center mt-3"><button className="btn btn-sm btn-outline-primary" disabled={timelinePagination.page <= 1} onClick={() => loadTimelinePage(timelinePagination.page - 1)} type="button">Previous</button><span className="small text-secondary">Page {timelinePagination.page} of {timelinePagination.totalPages}</span><button className="btn btn-sm btn-outline-primary" disabled={timelinePagination.page >= timelinePagination.totalPages} onClick={() => loadTimelinePage(timelinePagination.page + 1)} type="button">Next</button></div>}
               </div>}
             </div>
             {record.investigationHistory?.length > 0 && <div className="fir-detail-card mt-4"><div className="detail-section-header"><h3>Investigation History</h3></div>{record.investigationHistory.map((round) => { const roundEvidence = evidence.filter((item) => item.investigationRound === round.round); return <div className="border rounded p-3 mb-3" key={round.round}><strong>Investigation Round {round.round}</strong><div className="small text-secondary">Started: {date(round.startedAt)} · Closed: {date(round.closedAt)} · {displayValue(round.status)}</div>{round.reopenReason && <div>Reason: {round.reopenReason}</div>}<div className="mt-2">{roundEvidence.length ? roundEvidence.map((item) => <div key={item._id}>{item.evidenceId} · {item.type}</div>) : 'No evidence recorded in this round.'}</div></div> })}</div>}
