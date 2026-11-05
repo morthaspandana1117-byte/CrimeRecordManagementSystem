@@ -210,6 +210,10 @@ test("crime statistics workbook parses, respects filters and officer scope, and 
     const content = sheetText(sheet);
     assert.match(content, /Crime Statistics Report/);
     assert.match(content, /Total FIRs/);
+    assert.match(content, /Total cases\n2/);
+    assert.match(content, /Cases by month \(Case.startDate, UTC\)/);
+    assert.match(content, /Cases by police station/);
+    assert.match(content, /Cases by city and state/);
     assert.match(content, /Theft/);
     assert.match(content, /Fraud/);
     assert.doesNotMatch(content, /Murder/);

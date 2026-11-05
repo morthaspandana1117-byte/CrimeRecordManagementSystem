@@ -45,8 +45,22 @@ const countRows = (items, labelField) => items.map((item) => ({ label: item[labe
 
 const sectionsForReport = (type, data) => {
     if (type === "crime-statistics") {
+        const cases = data.caseStatistics;
         return [
-            { title: "Summary", rows: [{ label: "Total FIRs", value: data.totalFirs }] },
+            { title: "Summary", rows: [
+                { label: "Total FIRs", value: data.totalFirs },
+                { label: "Total cases", value: cases.totalCases },
+                { label: "Open cases", value: cases.openCases },
+                { label: "Closed cases", value: cases.closedCases },
+                { label: "Cases without complete location", value: cases.casesWithoutCompleteLocation },
+            ] },
+            { title: "Case statuses", rows: countRows(cases.statusStats, "status") },
+            { title: "Cases by month (Case.startDate, UTC)", rows: countRows(cases.monthlyStats, "month") },
+            { title: "Cases by year (Case.startDate, UTC)", rows: countRows(cases.yearlyStats, "year") },
+            { title: "Cases by crime type", rows: countRows(cases.crimeTypeStats, "crimeType") },
+            { title: "Cases by state", rows: countRows(cases.stateStats, "state") },
+            { title: "Cases by police station", rows: countRows(cases.policeStationStats, "policeStation") },
+            { title: "Cases by city and state", rows: cases.locationStats.map((item) => ({ label: `${item.city}, ${item.state}`, value: item.count })) },
             { title: "Crime type statistics", rows: countRows(data.crimeTypeStats, "crimeType") },
             { title: "Status statistics", rows: countRows(data.statusStats, "status") },
             { title: "Location statistics", rows: data.locationStats.map((item) => ({ label: `${item.city}, ${item.state}`, value: item.count })) },
@@ -81,7 +95,8 @@ const filtersForReport = (type, query) => {
     if (type === "officer-performance") return [];
     const labels = {
         fromDate: "From date (inclusive, UTC)", toDate: "To date (inclusive, UTC)",
-        crimeType: "Crime type", status: "FIR status", city: "City", state: "State", pincode: "Pincode",
+        crimeType: "Crime type", status: "FIR status", caseStatus: "Case status",
+        city: "City", state: "State", pincode: "Pincode", policeStation: "Police station",
     };
     return Object.entries(query).map(([key, value]) => ({ label: labels[key], value }));
 };

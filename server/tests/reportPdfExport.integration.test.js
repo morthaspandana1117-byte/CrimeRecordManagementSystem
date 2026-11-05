@@ -207,6 +207,10 @@ test("crime statistics PDF uses authorized server data and safe response headers
     assert.ok(pdfBytes(response).startsWith("%PDF-"));
     assert.match(content, /Crime Statistics Report/);
     assert.match(content, /Total FIRs: 1/);
+    assert.match(content, /Total cases: 1/);
+    assert.match(content, /Cases by month \(Case.startDate, UTC\)/);
+    assert.match(content, /Cases by police station/);
+    assert.match(content, /Cases by city and state/);
     assert.match(content, /Theft: 1/);
     assert.doesNotMatch(content, /Murder: 1/);
     assert.doesNotMatch(content, /Fraud: 1/);
@@ -271,6 +275,7 @@ test("empty authorized report data still produces a valid PDF without sensitive 
     const content = pdfText(response);
     assert.ok(pdfBytes(response).startsWith("%PDF-"));
     assert.match(content, /Total FIRs: 0/);
+    assert.match(content, /Total cases: 0/);
     for (const field of ["passwordHash", "passwordResetToken", "passwordResetExpires", "metadata", "Authorization", "secret-reset"]) {
         assert.equal(content.includes(field), false, `${field} must not appear in PDF`);
     }

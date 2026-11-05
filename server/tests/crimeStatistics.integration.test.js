@@ -66,6 +66,18 @@ const createFIR = (registeredBy, data) => FIR.create({
     status: data.status,
 });
 
+const createCase = (fir, data) => Case.create({
+    caseNo: data.caseNo,
+    firId: fir._id,
+    assignedOfficerIds: [data.officerId],
+    criminalIds: [],
+    title: "Crime statistics fixture",
+    description: "Synthetic case statistics fixture",
+    startDate: data.startDate,
+    status: data.status,
+    priority: "Medium",
+});
+
 test.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     const mongoUri = mongoServer.getUri("crms-crime-statistics");
@@ -90,10 +102,14 @@ test.before(async () => {
     });
     adminToken = await login(admin.username);
 
-    await createFIR(officerA._id, { firNo: "STATS-001", date: "2026-01-02", crimeType: "Theft", status: "Open", city: "Bengaluru" });
-    await createFIR(officerA._id, { firNo: "STATS-002", date: "2026-01-02", crimeType: "Theft", status: "Under Investigation", city: "Mysuru" });
-    await createFIR(officerA._id, { firNo: "STATS-003", date: "2026-02-10T23:59:59.999Z", crimeType: "Fraud", status: "Closed", city: "Bengaluru", pincode: "560002" });
-    await createFIR(officerB._id, { firNo: "STATS-004", date: "2026-01-03", crimeType: "Murder", status: "Open", city: "Bengaluru" });
+    const firOne = await createFIR(officerA._id, { firNo: "STATS-001", date: "2026-01-02", crimeType: "Theft", status: "Open", city: "Bengaluru" });
+    const firTwo = await createFIR(officerA._id, { firNo: "STATS-002", date: "2026-01-02", crimeType: "Theft", status: "Under Investigation", city: "Mysuru" });
+    const firThree = await createFIR(officerA._id, { firNo: "STATS-003", date: "2026-02-10T23:59:59.999Z", crimeType: "Fraud", status: "Closed", city: "Bengaluru", pincode: "560002" });
+    const firFour = await createFIR(officerB._id, { firNo: "STATS-004", date: "2026-01-03", crimeType: "Murder", status: "Open", city: "Bengaluru" });
+    await createCase(firOne, { caseNo: "CS-STATS-001", startDate: "2026-01-02", status: "Open", officerId: officerA._id });
+    await createCase(firTwo, { caseNo: "CS-STATS-002", startDate: "2026-01-02", status: "Under Investigation", officerId: officerA._id });
+    await createCase(firThree, { caseNo: "CS-STATS-003", startDate: "2026-02-10T23:59:59.999Z", status: "Closed", officerId: officerA._id });
+    await createCase(firFour, { caseNo: "CS-STATS-004", startDate: "2026-01-03", status: "Reopened", officerId: officerB._id });
 });
 
 test.after(async () => {
@@ -128,12 +144,22 @@ test("crime statistics uses server aggregation and the authenticated FIR scope",
         { status: "Under Investigation", count: 1 },
     ]);
     assert.equal(aggregated.body.data.dateStats.length, 2);
+    assert.equal(aggregated.body.data.caseStatistics.totalCases, 3);
+    assert.equal(aggregated.body.data.caseStatistics.openCases, 2);
+    assert.equal(aggregated.body.data.caseStatistics.closedCases, 1);
+    assert.deepEqual(aggregated.body.data.caseStatistics.monthlyStats, [
+        { month: "2026-01", count: 2 },
+        { month: "2026-02", count: 1 },
+    ]);
+    assert.deepEqual(aggregated.body.data.caseStatistics.yearlyStats, [{ year: "2026", count: 3 }]);
+    assert.equal(aggregated.body.data.caseStatistics.dateBasis, "Case.startDate (UTC)");
 
     const broadOperational = await request(app)
         .get("/api/reports/crime-statistics")
         .set("Authorization", `Bearer ${inspectorToken}`);
     assert.equal(broadOperational.status, 200);
     assert.equal(broadOperational.body.data.totalFirs, 4);
+    assert.equal(broadOperational.body.data.caseStatistics.totalCases, 4);
 });
 
 test("crime statistics rejects unauthorized, invalid, and unsupported access safely", async () => {
@@ -152,7 +178,9 @@ test("crime statistics rejects unauthorized, invalid, and unsupported access saf
         "fromDate=2026-02-10&toDate=2026-01-01",
         "crimeType=NotARealCrime",
         "status=Unknown",
+        "caseStatus=Pending",
         "city[$ne]=Bengaluru",
+        "policeStation[$ne]=Statistics Station",
     ]) {
         const response = await request(app)
             .get(`/api/reports/crime-statistics?${query}`)
@@ -185,6 +213,82 @@ test("crime statistics supports date, crime type, status, and location filters i
     assert.equal(empty.status, 200);
     assert.equal(empty.body.data.totalFirs, 0);
     assert.deepEqual(empty.body.data.crimeTypeStats, []);
+    assert.equal(empty.body.data.caseStatistics.totalCases, 0);
+    assert.equal(empty.body.data.caseStatistics.openCases, 0);
+    assert.equal(empty.body.data.caseStatistics.closedCases, 0);
+    assert.deepEqual(empty.body.data.caseStatistics.statusStats, [
+        { status: "Open", count: 0 },
+        { status: "Under Investigation", count: 0 },
+        { status: "Court Proceedings", count: 0 },
+        { status: "Closed", count: 0 },
+        { status: "Reopened", count: 0 },
+    ]);
+});
+
+test("case statistics apply case status and combined filters without duplicate linked records", async () => {
+    const get = (query) => request(app)
+        .get(`/api/reports/crime-statistics?${query}`)
+        .set("Authorization", `Bearer ${officerAToken}`);
+
+    const closed = await get("caseStatus=Closed");
+    assert.equal(closed.status, 200);
+    assert.equal(closed.body.data.totalFirs, 1);
+    assert.deepEqual(closed.body.data.statusStats, [{ status: "Closed", count: 1 }]);
+    assert.equal(closed.body.data.caseStatistics.totalCases, 1);
+    assert.equal(closed.body.data.caseStatistics.closedCases, 1);
+
+    const combined = await get("fromDate=2026-02-10&toDate=2026-02-10&caseStatus=Closed&crimeType=Fraud&city=Bengaluru&policeStation=Statistics%20Station");
+    assert.equal(combined.status, 200);
+    assert.equal(combined.body.data.caseStatistics.totalCases, 1);
+    assert.deepEqual(combined.body.data.caseStatistics.crimeTypeStats, [{ crimeType: "Fraud", count: 1 }]);
+    assert.deepEqual(combined.body.data.caseStatistics.locationStats, [{ city: "Bengaluru", state: "Karnataka", count: 1 }]);
+    assert.deepEqual(combined.body.data.caseStatistics.policeStationStats, [{ policeStation: "Statistics Station", count: 1 }]);
+
+    const noMatch = await get("fromDate=2025-01-01&toDate=2025-12-31");
+    assert.equal(noMatch.status, 200);
+    assert.equal(noMatch.body.data.caseStatistics.totalCases, 0);
+    assert.deepEqual(noMatch.body.data.caseStatistics.monthlyStats, []);
+});
+
+test("case geography reports incomplete source locations separately", async () => {
+    const missingLocationFirId = new mongoose.Types.ObjectId();
+    await FIR.collection.insertOne({
+        _id: missingLocationFirId,
+        firNo: "STATS-MISSING-LOCATION",
+        date: new Date("2026-03-01T00:00:00.000Z"),
+        policeStation: "Statistics Station",
+        complaint: { complainantName: "Synthetic", complaintText: "Synthetic fixture" },
+        description: "Synthetic incomplete geography fixture",
+        crimeType: "Other",
+        location: { address: "1 Test Road", state: " " },
+        registeredBy: officerA._id,
+        criminalIds: [],
+        status: "Open",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+    });
+    await Case.create({
+        caseNo: "CS-STATS-MISSING-LOCATION",
+        firId: missingLocationFirId,
+        assignedOfficerIds: [officerA._id],
+        criminalIds: [],
+        title: "Incomplete location fixture",
+        description: "Synthetic case with incomplete source geography",
+        startDate: "2026-03-01",
+        status: "Court Proceedings",
+        priority: "Medium",
+    });
+
+    const response = await request(app)
+        .get("/api/reports/crime-statistics?fromDate=2026-03-01&toDate=2026-03-01")
+        .set("Authorization", `Bearer ${officerAToken}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.caseStatistics.totalCases, 1);
+    assert.equal(response.body.data.caseStatistics.casesWithoutCompleteLocation, 1);
+    assert.deepEqual(response.body.data.caseStatistics.locationStats, []);
+    assert.deepEqual(response.body.data.caseStatistics.stateStats, []);
+    await Case.deleteOne({ caseNo: "CS-STATS-MISSING-LOCATION" });
+    await FIR.collection.deleteOne({ firNo: "STATS-MISSING-LOCATION" });
 });
 
 test("date-only filters include complete boundary days and exclude records outside the range", async () => {
@@ -242,4 +346,18 @@ test("investigating officers cannot create reports for cases outside their assig
         });
     assert.equal(response.status, 403);
     assert.equal(response.body.error, "REPORT_CASE_ACCESS_DENIED");
+});
+
+test("crime statistics returns zero-valued case results for an empty database", async () => {
+    await Case.deleteMany({});
+    await FIR.deleteMany({});
+    const response = await request(app)
+        .get("/api/reports/crime-statistics")
+        .set("Authorization", `Bearer ${inspectorToken}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.totalFirs, 0);
+    assert.equal(response.body.data.caseStatistics.totalCases, 0);
+    assert.equal(response.body.data.caseStatistics.openCases, 0);
+    assert.equal(response.body.data.caseStatistics.closedCases, 0);
+    assert.deepEqual(response.body.data.caseStatistics.monthlyStats, []);
 });

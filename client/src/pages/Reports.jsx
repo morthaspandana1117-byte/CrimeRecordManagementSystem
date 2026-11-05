@@ -9,6 +9,7 @@ import {
   getOfficerPerformance,
   getSubordinateOfficers,
 } from '../services/api'
+import { buildCrimeStatisticsQuery, getCaseStatisticsCharts, getCaseStatisticsMetrics } from '../utils/crimeStatistics'
 
 const reportTabs = [
   { id: 'crime-statistics', label: 'Crime statistics' },
@@ -31,6 +32,7 @@ const crimeTypes = [
 ]
 
 const firStatuses = ['Open', 'Registered', 'Under Investigation', 'Charge Sheet Filed', 'Closed']
+const caseStatuses = ['Open', 'Under Investigation', 'Court Proceedings', 'Closed', 'Reopened']
 const currentMonth = () => new Date().toISOString().slice(0, 7)
 const initialQueries = () => ({
   'crime-statistics': {},
@@ -90,6 +92,42 @@ function ReportMetric({ label, value }) {
   )
 }
 
+function StatisticsChart({ title, rows }) {
+  const maximum = Math.max(0, ...rows.map(({ count }) => count))
+
+  return (
+    <section className="report-table-card h-100" aria-label={title}>
+      <div className="p-3 p-md-4">
+        <h3 className="h5 section-title mb-3">{title}</h3>
+        {rows.length === 0
+          ? <p className="text-secondary mb-0">No records matched the selected filters.</p>
+          : (
+            <ul className="list-unstyled mb-0 d-grid gap-3">
+              {rows.map(({ label, count }) => (
+                <li key={label}>
+                  <div className="d-flex justify-content-between gap-3 mb-1">
+                    <span className="text-break">{label}</span>
+                    <strong>{formatNumber(count)}</strong>
+                  </div>
+                  <div
+                    className="progress"
+                    role="progressbar"
+                    aria-label={`${label}: ${count}`}
+                    aria-valuenow={count}
+                    aria-valuemin="0"
+                    aria-valuemax={maximum || 1}
+                  >
+                    <div className="progress-bar bg-primary" style={{ width: `${maximum ? (count / maximum) * 100 : 0}%` }} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+      </div>
+    </section>
+  )
+}
+
 function Reports() {
   const { logout, user } = useAuth()
   const navigate = useNavigate()
@@ -100,9 +138,11 @@ function Reports() {
     toDate: '',
     crimeType: '',
     status: '',
+    caseStatus: '',
     city: '',
     state: '',
     pincode: '',
+    policeStation: '',
     month: currentMonth(),
     officerId: '',
   })
@@ -197,17 +237,7 @@ function Reports() {
 
   const makeQuery = (type) => {
     if (type === 'crime-statistics') {
-      return Object.fromEntries(
-        Object.entries({
-          fromDate: draft.fromDate.trim(),
-          toDate: draft.toDate.trim(),
-          crimeType: draft.crimeType,
-          status: draft.status,
-          city: draft.city.trim(),
-          state: draft.state.trim(),
-          pincode: draft.pincode.trim(),
-        }).filter(([, value]) => value !== ''),
-      )
+      return buildCrimeStatisticsQuery(draft)
     }
     if (type === 'monthly') return { month: draft.month }
     return draft.officerId ? { officerId: draft.officerId } : {}
@@ -224,9 +254,11 @@ function Reports() {
       toDate: '',
       crimeType: '',
       status: '',
+      caseStatus: '',
       city: '',
       state: '',
       pincode: '',
+      policeStation: '',
       month: currentMonth(),
       officerId: '',
     }
@@ -320,9 +352,11 @@ function Reports() {
                 <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-to-date">To date</label><input className="form-control" id="report-to-date" onChange={(event) => setDraft((current) => ({ ...current, toDate: event.target.value }))} type="date" value={draft.toDate} /></div>
                 <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-crime-type">Crime type</label><select className="form-select" id="report-crime-type" onChange={(event) => setDraft((current) => ({ ...current, crimeType: event.target.value }))} value={draft.crimeType}><option value="">All crime types</option>{crimeTypes.map((crimeType) => <option key={crimeType} value={crimeType}>{crimeType}</option>)}</select></div>
                 <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-fir-status">FIR status</label><select className="form-select" id="report-fir-status" onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))} value={draft.status}><option value="">All statuses</option>{firStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></div>
-                <div className="col-12 col-sm-6 col-lg-4"><label className="form-label" htmlFor="report-city">City</label><input className="form-control" id="report-city" onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} value={draft.city} /></div>
-                <div className="col-12 col-sm-6 col-lg-4"><label className="form-label" htmlFor="report-state">State</label><input className="form-control" id="report-state" onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value }))} value={draft.state} /></div>
-                <div className="col-12 col-sm-6 col-lg-4"><label className="form-label" htmlFor="report-pincode">Pincode</label><input className="form-control" id="report-pincode" onChange={(event) => setDraft((current) => ({ ...current, pincode: event.target.value }))} value={draft.pincode} /></div>
+                <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-case-status">Case status</label><select className="form-select" id="report-case-status" onChange={(event) => setDraft((current) => ({ ...current, caseStatus: event.target.value }))} value={draft.caseStatus}><option value="">All case statuses</option>{caseStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></div>
+                <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-city">City</label><input className="form-control" id="report-city" onChange={(event) => setDraft((current) => ({ ...current, city: event.target.value }))} value={draft.city} /></div>
+                <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-state">State</label><input className="form-control" id="report-state" onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value }))} value={draft.state} /></div>
+                <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-pincode">Pincode</label><input className="form-control" id="report-pincode" onChange={(event) => setDraft((current) => ({ ...current, pincode: event.target.value }))} value={draft.pincode} /></div>
+                <div className="col-12 col-sm-6 col-lg-3"><label className="form-label" htmlFor="report-police-station">Police station</label><input className="form-control" id="report-police-station" onChange={(event) => setDraft((current) => ({ ...current, policeStation: event.target.value }))} value={draft.policeStation} /></div>
               </div>
             )}
             {activeReport === 'monthly' && (
@@ -364,7 +398,18 @@ function Reports() {
           <>
             {activeReport === 'crime-statistics' && (
               <>
-                <div className="row g-3 g-md-4 mb-4"><ReportMetric label="Total FIRs" value={reportData[activeReport].totalFirs} /></div>
+                <p className="text-secondary">FIR totals and date filters use FIR.date (UTC). Case totals and trends use Case.startDate (UTC). Crime type and geographic filters use linked FIR source fields.</p>
+                <div className="row g-3 g-md-4 mb-4">
+                  {getCaseStatisticsMetrics(reportData[activeReport].caseStatistics).map(({ label, value }) => <ReportMetric key={label} label={label} value={value} />)}
+                  <ReportMetric label="Total FIRs" value={reportData[activeReport].totalFirs} />
+                </div>
+                {reportData[activeReport].caseStatistics.totalCases === 0 && <div className="alert alert-info" role="status">No cases matched the selected filters.</div>}
+                <div className="row g-3 g-md-4 mb-4">
+                  {getCaseStatisticsCharts(reportData[activeReport].caseStatistics).map(({ title, rows }) => (
+                    <div className="col-12 col-lg-6" key={title}><StatisticsChart title={title} rows={rows} /></div>
+                  ))}
+                </div>
+                {reportData[activeReport].caseStatistics.casesWithoutCompleteLocation > 0 && <p className="text-secondary" role="status">{formatNumber(reportData[activeReport].caseStatistics.casesWithoutCompleteLocation)} cases have incomplete or missing city, state, or police-station data; they are omitted from geographic breakdowns that require those fields.</p>}
                 <ReportTable title="FIRs by crime type" columns={[{ key: 'crimeType', label: 'Crime type' }, { key: 'count', label: 'FIRs' }]} rows={reportData[activeReport].crimeTypeStats.map((row) => ({ ...row, count: formatNumber(row.count) }))} />
                 <ReportTable title="FIRs by status" columns={[{ key: 'status', label: 'Status' }, { key: 'count', label: 'FIRs' }]} rows={reportData[activeReport].statusStats.map((row) => ({ ...row, count: formatNumber(row.count) }))} />
                 <ReportTable title="FIRs by location" columns={[{ key: 'city', label: 'City' }, { key: 'state', label: 'State' }, { key: 'count', label: 'FIRs' }]} rows={reportData[activeReport].locationStats.map((row) => ({ ...row, count: formatNumber(row.count) }))} />

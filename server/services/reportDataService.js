@@ -24,7 +24,8 @@ const crimeTypes = [
     "Cyber Crime", "Drug Offense", "Sexual Offense", "Property Crime", "Other",
 ];
 const firStatuses = ["Open", "Registered", "Under Investigation", "Charge Sheet Filed", "Closed"];
-const crimeStatisticFilters = new Set(["fromDate", "toDate", "crimeType", "status", "city", "state", "pincode"]);
+const caseStatuses = ["Open", "Under Investigation", "Court Proceedings", "Closed", "Reopened"];
+const crimeStatisticFilters = new Set(["fromDate", "toDate", "crimeType", "status", "caseStatus", "city", "state", "pincode", "policeStation"]);
 const scalar = (value) => typeof value === "string" && value.trim().length > 0;
 
 const parseCalendarDate = (value) => {
@@ -70,13 +71,31 @@ const getCrimeStatisticsData = async (query, authority) => {
         if (!firStatuses.includes(query.status)) invalid("Unsupported FIR status", "INVALID_FIR_STATUS");
         filter.status = query.status;
     }
+    if (query.caseStatus !== undefined && !caseStatuses.includes(query.caseStatus)) {
+        invalid("Unsupported case status", "INVALID_CASE_STATUS");
+    }
     for (const field of ["city", "state", "pincode"]) {
         if (query[field] !== undefined) filter[`location.${field}`] = query[field].trim();
     }
+    if (query.policeStation !== undefined) filter.policeStation = query.policeStation.trim();
     if (!isSeniorOfficerRank(authority.rank)) filter.registeredBy = authority.officer._id;
 
-    const [result] = await FIR.aggregate([
+    const firPipeline = [
         { $match: filter },
+        ...(query.caseStatus !== undefined ? [
+            {
+                $lookup: {
+                    from: Case.collection.name,
+                    let: { matchedFirId: "$_id" },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ["$firId", "$$matchedFirId"] } } },
+                        { $project: { _id: 0, status: 1 } },
+                    ],
+                    as: "caseRecord",
+                },
+            },
+            { $match: { "caseRecord.status": query.caseStatus } },
+        ] : []),
         {
             $facet: {
                 total: [{ $count: "count" }],
@@ -86,7 +105,100 @@ const getCrimeStatisticsData = async (query, authority) => {
                 dateStats: [{ $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: "UTC" } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }],
             },
         },
+    ];
+
+    const caseMatch = {};
+    if (query.caseStatus !== undefined) caseMatch.status = query.caseStatus;
+    if (fromDate || toDate) {
+        caseMatch.startDate = {};
+        if (fromDate) caseMatch.startDate.$gte = fromDate;
+        if (toDate) {
+            const exclusiveEnd = new Date(toDate);
+            exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+            caseMatch.startDate.$lt = exclusiveEnd;
+        }
+    }
+
+    const linkedFirMatch = {};
+    if (query.crimeType !== undefined) linkedFirMatch["fir.crimeType"] = query.crimeType;
+    if (query.status !== undefined) linkedFirMatch["fir.status"] = query.status;
+    for (const field of ["city", "state", "pincode"]) {
+        if (query[field] !== undefined) linkedFirMatch[`fir.location.${field}`] = query[field].trim();
+    }
+    if (query.policeStation !== undefined) linkedFirMatch["fir.policeStation"] = query.policeStation.trim();
+    if (!isSeniorOfficerRank(authority.rank)) linkedFirMatch["fir.registeredBy"] = authority.officer._id;
+
+    const casePipeline = [
+        { $match: caseMatch },
+        {
+            $lookup: {
+                from: FIR.collection.name,
+                let: { linkedFirId: "$firId" },
+                pipeline: [
+                    { $match: { $expr: { $eq: ["$_id", "$$linkedFirId"] } } },
+                    { $project: { crimeType: 1, status: 1, policeStation: 1, "location.city": 1, "location.state": 1, "location.pincode": 1, registeredBy: 1 } },
+                ],
+                as: "fir",
+            },
+        },
+        { $unwind: { path: "$fir", preserveNullAndEmptyArrays: true } },
+        ...(Object.keys(linkedFirMatch).length ? [{ $match: linkedFirMatch }] : []),
+        {
+            $addFields: {
+                _statCity: { $trim: { input: { $ifNull: ["$fir.location.city", ""] } } },
+                _statState: { $trim: { input: { $ifNull: ["$fir.location.state", ""] } } },
+                _statPoliceStation: { $trim: { input: { $ifNull: ["$fir.policeStation", ""] } } },
+                _statCrimeType: { $trim: { input: { $ifNull: ["$fir.crimeType", ""] } } },
+            },
+        },
+        {
+            $facet: {
+                total: [{ $count: "count" }],
+                statusStats: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
+                monthlyStats: [
+                    { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$startDate", timezone: "UTC" } }, count: { $sum: 1 } } },
+                    { $sort: { _id: 1 } },
+                ],
+                yearlyStats: [
+                    { $group: { _id: { $dateToString: { format: "%Y", date: "$startDate", timezone: "UTC" } }, count: { $sum: 1 } } },
+                    { $sort: { _id: 1 } },
+                ],
+                crimeTypeStats: [
+                    { $group: { _id: { $cond: [{ $eq: ["$_statCrimeType", ""] }, "Unspecified", "$_statCrimeType"] }, count: { $sum: 1 } } },
+                    { $sort: { _id: 1 } },
+                ],
+                stateStats: [
+                    { $match: { _statState: { $ne: "" } } },
+                    { $group: { _id: "$_statState", count: { $sum: 1 } } },
+                    { $sort: { _id: 1 } },
+                ],
+                policeStationStats: [
+                    { $match: { _statPoliceStation: { $ne: "" } } },
+                    { $group: { _id: "$_statPoliceStation", count: { $sum: 1 } } },
+                    { $sort: { _id: 1 } },
+                ],
+                locationStats: [
+                    { $match: { _statState: { $ne: "" }, _statCity: { $ne: "" } } },
+                    { $group: { _id: { city: "$_statCity", state: "$_statState" }, count: { $sum: 1 } } },
+                    { $sort: { "_id.state": 1, "_id.city": 1 } },
+                ],
+                missingGeography: [
+                    { $match: { $or: [{ _statState: "" }, { _statCity: "" }, { _statPoliceStation: "" }] } },
+                    { $count: "count" },
+                ],
+            },
+        },
+    ];
+
+    const [[result], [caseResult]] = await Promise.all([
+        FIR.aggregate(firPipeline),
+        Case.aggregate(casePipeline),
     ]);
+
+    const caseCounts = new Map(caseResult.statusStats.map(({ _id, count }) => [_id, count]));
+    const totalCases = caseResult.total[0]?.count || 0;
+    const statusStats = caseStatuses.map((status) => ({ status, count: caseCounts.get(status) || 0 }));
+    const closedCases = caseCounts.get("Closed") || 0;
 
     return {
         totalFirs: result.total[0]?.count || 0,
@@ -94,6 +206,21 @@ const getCrimeStatisticsData = async (query, authority) => {
         statusStats: result.statusStats.map(({ _id, count }) => ({ status: _id, count })),
         locationStats: result.locationStats.map(({ _id, count }) => ({ city: _id.city, state: _id.state, count })),
         dateStats: result.dateStats.map(({ _id, count }) => ({ date: _id, count })),
+        caseStatistics: {
+            totalCases,
+            openCases: totalCases - closedCases,
+            closedCases,
+            statusStats,
+            monthlyStats: caseResult.monthlyStats.map(({ _id, count }) => ({ month: _id, count })),
+            yearlyStats: caseResult.yearlyStats.map(({ _id, count }) => ({ year: _id, count })),
+            crimeTypeStats: caseResult.crimeTypeStats.map(({ _id, count }) => ({ crimeType: _id, count })),
+            stateStats: caseResult.stateStats.map(({ _id, count }) => ({ state: _id, count })),
+            policeStationStats: caseResult.policeStationStats.map(({ _id, count }) => ({ policeStation: _id, count })),
+            locationStats: caseResult.locationStats.map(({ _id, count }) => ({ city: _id.city, state: _id.state, count })),
+            casesWithoutCompleteLocation: caseResult.missingGeography[0]?.count || 0,
+            dateBasis: "Case.startDate (UTC)",
+        },
+        firDateBasis: "FIR.date (UTC)",
     };
 };
 
