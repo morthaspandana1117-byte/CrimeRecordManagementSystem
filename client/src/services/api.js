@@ -91,5 +91,12 @@ export const getEvidenceHistory = (id, params = {}) => {
   const { url, ...config } = evidenceHistoryRequestConfig(id, params)
   return api.get(url, config)
 }
+export const getHumanReviewSuggestions = (params = {}) => api.get('/human-review', { params })
+export const getHumanReviewById = (id) => api.get(`/human-review/${id}`)
+export const createHumanReviewSuggestion = (payload) => api.post('/human-review', payload)
+export const acceptHumanReviewSuggestion = (id, payload = {}) => api.post(`/human-review/${id}/accept`, payload)
+export const correctHumanReviewSuggestion = (id, payload) => api.post(`/human-review/${id}/correct`, payload)
+export const rejectHumanReviewSuggestion = (id, payload) => api.post(`/human-review/${id}/reject`, payload)
+export const getHumanReviewHistory = (id) => api.get(`/human-review/${id}/history`)
 export { TOKEN_STORAGE_KEY }
 export default api
