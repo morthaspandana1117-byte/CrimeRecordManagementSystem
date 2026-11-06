@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { createFIR, getAssignableOfficers, getCriminals } from '../services/api'
+import { coordinatePayload, validateOptionalCoordinates } from '../utils/geographicCoordinates'
 
 const initialForm = {
   firNo: '',
@@ -16,6 +17,8 @@ const initialForm = {
   city: '',
   state: '',
   pincode: '',
+  latitude: '',
+  longitude: '',
   registeredBy: '',
   criminalIds: [],
   status: 'Open',
@@ -84,6 +87,8 @@ function FIRCreate() {
     if (!form.description.trim()) return 'Description is required.'
     if (!form.crimeType.trim()) return 'Crime type is required.'
     if (!form.address.trim() || !form.city.trim() || !form.state.trim() || !form.pincode.trim()) return 'Location address, city, state, and pincode are required.'
+    const coordinateError = validateOptionalCoordinates(form.latitude, form.longitude)
+    if (coordinateError) return coordinateError
     if (user?.role === 'admin' && !form.registeredBy) return 'Please select an eligible officer for this FIR.'
     if (!form.criminalIds.length) return 'Select at least one criminal linked to this FIR.'
     return ''
@@ -100,6 +105,7 @@ function FIRCreate() {
       return
     }
 
+    const coordinates = coordinatePayload(form.latitude, form.longitude)
     const payload = {
       firNo: form.firNo.trim(),
       date: form.date,
@@ -117,6 +123,8 @@ function FIRCreate() {
         state: form.state.trim(),
         pincode: form.pincode.trim(),
       },
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
       registeredBy: user?.role === 'admin' ? form.registeredBy : undefined,
       criminalIds: form.criminalIds,
       status: form.status,
@@ -256,6 +264,23 @@ function FIRCreate() {
                 <div className="col-12 col-md-6">
                   <label className="form-label" htmlFor="pincode">Pincode</label>
                   <input className="form-control" id="pincode" name="pincode" onChange={updateField} required value={form.pincode} />
+                </div>
+
+                <div className="col-12">
+                  <fieldset className="border rounded-3 p-3">
+                    <legend className="float-none w-auto px-2 fs-6 fw-semibold mb-0">Verified coordinates (optional)</legend>
+                    <p className="form-text mt-0">Enter coordinates only when verified from a trusted source. Coordinates are never inferred from the address or generated automatically.</p>
+                    <div className="row g-3">
+                      <div className="col-12 col-md-6">
+                        <label className="form-label" htmlFor="latitude">Latitude</label>
+                        <input className="form-control" id="latitude" max="90" min="-90" name="latitude" onChange={updateField} placeholder="-90 to 90" step="any" type="number" value={form.latitude} />
+                      </div>
+                      <div className="col-12 col-md-6">
+                        <label className="form-label" htmlFor="longitude">Longitude</label>
+                        <input className="form-control" id="longitude" max="180" min="-180" name="longitude" onChange={updateField} placeholder="-180 to 180" step="any" type="number" value={form.longitude} />
+                      </div>
+                    </div>
+                  </fieldset>
                 </div>
 
                 <div className="col-12">

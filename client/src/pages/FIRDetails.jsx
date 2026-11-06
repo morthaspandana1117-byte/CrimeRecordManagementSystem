@@ -21,7 +21,7 @@ const getStatusClass = (value) => {
   return 'status-badge'
 }
 
-const getFieldValue = (value) => value || 'Not available'
+const getFieldValue = (value) => value === null || value === undefined || value === '' ? 'Not available' : value
 
 function FIRDetails() {
   const { id } = useParams()
@@ -182,6 +182,8 @@ function FIRDetails() {
                 <InfoField label="City" value={fir.location?.city} />
                 <InfoField label="State" value={fir.location?.state} />
                 <InfoField label="Pincode" value={fir.location?.pincode} />
+                <InfoField label="Verified latitude" value={fir.latitude} />
+                <InfoField label="Verified longitude" value={fir.longitude} />
               </div>
             </div>
           </div>

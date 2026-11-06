@@ -1,4 +1,5 @@
 const FIR = require("../models/FIR");
+const Case = require("../models/Case");
 const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
 const {
@@ -32,6 +33,8 @@ const allowedFields = [
     "description",
     "crimeType",
     "location",
+    "latitude",
+    "longitude",
     "registeredBy",
     "criminalIds",
     "status",
@@ -234,6 +237,41 @@ const validateFIR = async (res, body, partial = false, req = null) => {
             ))
     ) {
         return "location address, city, state, and pincode are required";
+    }
+
+    const hasLatitude = Object.prototype.hasOwnProperty.call(body, "latitude");
+    const hasLongitude = Object.prototype.hasOwnProperty.call(body, "longitude");
+    if (hasLatitude !== hasLongitude) {
+        return "latitude and longitude must be provided together";
+    }
+    if (hasLatitude && hasLongitude) {
+        const latitudeEmpty = body.latitude === null || body.latitude === "";
+        const longitudeEmpty = body.longitude === null || body.longitude === "";
+        if (latitudeEmpty !== longitudeEmpty) {
+            return "latitude and longitude must both contain verified coordinates or both be empty";
+        }
+        if (latitudeEmpty) {
+            body.latitude = null;
+            body.longitude = null;
+        } else {
+            const parseCoordinate = (value) => {
+                if (typeof value === "number") return value;
+                if (typeof value !== "string" || !/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())) {
+                    return Number.NaN;
+                }
+                return Number(value);
+            };
+            const latitude = parseCoordinate(body.latitude);
+            const longitude = parseCoordinate(body.longitude);
+            if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+                return "latitude must be a number between -90 and 90";
+            }
+            if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+                return "longitude must be a number between -180 and 180";
+            }
+            body.latitude = latitude;
+            body.longitude = longitude;
+        }
     }
 
     if (body.status !== undefined) {
@@ -515,10 +553,147 @@ const updateFIRStatus = async (req, res) => {
     }
 };
 
+const mapCrimeTypes = [
+    "Theft", "Robbery", "Murder", "Assault", "Kidnapping", "Fraud",
+    "Cyber Crime", "Drug Offense", "Sexual Offense", "Property Crime", "Other",
+];
+const mapCaseStatuses = ["Open", "Under Investigation", "Court Proceedings", "Closed", "Reopened"];
+const mapFilterKeys = new Set(["crimeType", "caseStatus", "fromDate", "toDate"]);
+const isScalarQueryValue = (value) => typeof value === "string" && value.trim().length > 0;
+const parseMapDate = (value) => {
+    if (!isScalarQueryValue(value) || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value ? null : date;
+};
+
+const getFIRMapData = async (req, res) => {
+    try {
+        const query = req.query || {};
+        if (
+            Object.keys(query).some((key) => !mapFilterKeys.has(key)) ||
+            Object.values(query).some((value) => !isScalarQueryValue(value))
+        ) {
+            return invalid(res, "Unsupported or malformed map filter", "INVALID_MAP_FILTER");
+        }
+
+        const fromDate = query.fromDate === undefined ? null : parseMapDate(query.fromDate);
+        const toDate = query.toDate === undefined ? null : parseMapDate(query.toDate);
+        if (query.fromDate !== undefined && !fromDate) {
+            return invalid(res, "fromDate must be a valid ISO date", "INVALID_FROM_DATE");
+        }
+        if (query.toDate !== undefined && !toDate) {
+            return invalid(res, "toDate must be a valid ISO date", "INVALID_TO_DATE");
+        }
+        if (fromDate && toDate && fromDate > toDate) {
+            return invalid(res, "fromDate must be on or before toDate", "INVALID_DATE_RANGE");
+        }
+
+        const filter = {};
+        if (query.crimeType !== undefined) {
+            if (!mapCrimeTypes.includes(query.crimeType)) {
+                return invalid(res, "Unsupported crimeType", "INVALID_CRIME_TYPE");
+            }
+            filter.crimeType = query.crimeType;
+        }
+        if (fromDate || toDate) {
+            filter.date = {};
+            if (fromDate) filter.date.$gte = fromDate;
+            if (toDate) {
+                const exclusiveEnd = new Date(toDate);
+                exclusiveEnd.setUTCDate(exclusiveEnd.getUTCDate() + 1);
+                filter.date.$lt = exclusiveEnd;
+            }
+        }
+        if (!isSeniorOfficerRank(req.authority?.rank) && req.authority?.systemRole !== "system_admin") {
+            filter.registeredBy = req.authority.officer._id;
+        }
+
+        const caseMatch = query.caseStatus === undefined ? null : query.caseStatus;
+        if (caseMatch && !mapCaseStatuses.includes(caseMatch)) {
+            return invalid(res, "Unsupported caseStatus", "INVALID_CASE_STATUS");
+        }
+
+        const mappedCoordinates = {
+            $and: [
+                { $isNumber: "$latitude" },
+                { $isNumber: "$longitude" },
+                { $gte: ["$latitude", -90] },
+                { $lte: ["$latitude", 90] },
+                { $gte: ["$longitude", -180] },
+                { $lte: ["$longitude", 180] },
+            ],
+        };
+        const [result] = await FIR.aggregate([
+            { $match: filter },
+            {
+                $lookup: {
+                    from: Case.collection.name,
+                    let: { firId: "$_id" },
+                    pipeline: [
+                        { $match: { $expr: { $eq: ["$firId", "$$firId"] } } },
+                        { $project: { caseNo: 1, status: 1 } },
+                        { $limit: 1 },
+                        { $limit: 1 },
+                    ],
+                    as: "caseRecord",
+                },
+            },
+            { $unwind: { path: "$caseRecord", preserveNullAndEmptyArrays: true } },
+            ...(caseMatch ? [{ $match: { "caseRecord.status": caseMatch } }] : []),
+            {
+                $facet: {
+                    summary: [
+                        {
+                            $group: {
+                                _id: null,
+                                totalRecords: { $sum: 1 },
+                                mappedRecords: { $sum: { $cond: [mappedCoordinates, 1, 0] } },
+                            },
+                        },
+                    ],
+                    records: [
+                        { $match: { $expr: mappedCoordinates } },
+                        {
+                            $project: {
+                                _id: 1,
+                                firNo: 1,
+                                date: 1,
+                                crimeType: 1,
+                                status: 1,
+                                latitude: 1,
+                                longitude: 1,
+                                "location.city": 1,
+                                "location.state": 1,
+                                policeStation: 1,
+                                caseNo: "$caseRecord.caseNo",
+                                caseStatus: "$caseRecord.status",
+                            },
+                        },
+                        { $sort: { date: -1, _id: 1 } },
+                    ],
+                },
+            },
+        ]);
+        const summary = result?.summary?.[0] || { totalRecords: 0, mappedRecords: 0 };
+        return res.status(200).json({
+            success: true,
+            data: {
+                totalRecords: summary.totalRecords,
+                mappedRecords: summary.mappedRecords,
+                unmappedRecords: summary.totalRecords - summary.mappedRecords,
+                records: result?.records || [],
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Get FIR map data error");
+    }
+};
+
 module.exports = {
     createFIR,
     getAllFIRs,
     getFIRById,
+    getFIRMapData,
     updateFIR,
     updateFIRStatus,
     normalizeFIRStatus,

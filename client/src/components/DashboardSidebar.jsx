@@ -7,6 +7,7 @@ const officerItems = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦', end: true },
   { to: '/cases', label: 'Cases', icon: '▤' },
   { to: '/firs', label: 'FIR Records', icon: '▥' },
+  { to: '/crime-map', label: 'Crime Map', icon: '⌖' },
   { to: '/criminals', label: 'Criminal Records', icon: '◈' },
   { to: '/reports', label: 'Reports', icon: '▧' },
   { to: '/search', label: 'Advanced Search', icon: '⌕' },

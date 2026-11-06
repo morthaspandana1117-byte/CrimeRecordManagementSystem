@@ -8,6 +8,7 @@ import CriminalDetails from './pages/CriminalDetails'
 import CriminalEdit from './pages/CriminalEdit'
 import CriminalList from './pages/CriminalList'
 import Dashboard from './pages/Dashboard'
+import CrimeMap from './pages/CrimeMap'
 import EvidenceCreate from './pages/EvidenceCreate'
 import CaseCreate from './pages/CaseCreate'
 import CaseDetails from './pages/CaseDetails'
@@ -44,6 +45,7 @@ function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
+      <Route path="/crime-map" element={<ProtectedRoute allowedRanks={officerRanks}><CrimeMap /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute allowedRanks={officerRanks}><Reports /></ProtectedRoute>} />
       <Route path="/search" element={<ProtectedRoute allowedRanks={officerRanks}><AdvancedSearch /></ProtectedRoute>} />
       <Route path="/ai-evaluation" element={<ProtectedRoute allowedSystemRoles={['system_admin']} allowedManagementRanks={seniorOfficerManagementRanks}><AIEvaluationDashboard /></ProtectedRoute>} />

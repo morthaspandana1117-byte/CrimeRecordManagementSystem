@@ -82,6 +82,10 @@ a:hover { color: var(--color-primary-hover); }
 .officer-table-card, .criminal-table-card, .fir-table-card, .report-table-card, .audit-table-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); overflow: auto; }
 .officer-table-card th, .criminal-table-card th, .fir-table-card th, .report-table-card th, .audit-table-card th { background: #EFE7DB; color: var(--color-primary); font-size: .75rem; text-transform: uppercase; white-space: nowrap; }
 .officer-table-card td, .criminal-table-card td, .fir-table-card td, .report-table-card td, .audit-table-card td { vertical-align: middle; }
+.crime-map-card { overflow: hidden; }
+.crime-map-card .leaflet-container { height: min(68vh, 46rem); min-height: 24rem; width: 100%; }
+.crime-map-popup { line-height: 1.6; min-width: 12rem; }
+.crime-map-popup strong { display: block; margin-bottom: .25rem; }
 .table > :not(caption) > * > * { border-bottom-color: var(--color-border); }
 .table-hover > tbody > tr:hover > * { background-color: #FBF9F5; color: var(--color-text); }
 .status-badge { border-radius: 999px; display: inline-block; font-size: .72rem; font-weight: 700; padding: .35rem .7rem; text-transform: capitalize; }

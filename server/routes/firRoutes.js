@@ -11,6 +11,7 @@ router.use(resolveAuthority);
 router.use(requireAuthority({ ranks: OFFICER_RANKS }));
 router.use(auditCapture);
 
+router.get("/map", controller.getFIRMapData);
 router.route("/").post(controller.createFIR).get(controller.getAllFIRs);
 router.patch("/:id/status", controller.updateFIRStatus);
 router

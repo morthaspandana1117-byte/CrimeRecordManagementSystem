@@ -113,3 +113,14 @@ test('officer badge numbers must be exactly six alphanumeric characters', async 
 
   assert.equal(await validationError(Officer, { ...baseOfficer, badgeNumber: 'aB1234' }), undefined);
 });
+
+test('FIR geographic coordinates accept valid boundaries and reject out-of-range values', async () => {
+  const baseFIR = validDocuments.find(([Model]) => Model === FIR)[1];
+  assert.equal(await validationError(FIR, { ...baseFIR, latitude: -90, longitude: 180 }), undefined);
+  assert.equal(await validationError(FIR, { ...baseFIR, latitude: 90, longitude: -180 }), undefined);
+
+  const invalidLatitude = await validationError(FIR, { ...baseFIR, latitude: 90.01, longitude: 0 });
+  assert.equal(invalidLatitude?.errors.latitude?.kind, 'max');
+  const invalidLongitude = await validationError(FIR, { ...baseFIR, latitude: 0, longitude: -180.01 });
+  assert.equal(invalidLongitude?.errors.longitude?.kind, 'min');
+})
