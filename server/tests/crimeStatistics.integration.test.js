@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const request = require("supertest");
 const { MongoMemoryReplSet } = require("mongodb-memory-server");
@@ -10,6 +11,7 @@ process.env.JWT_SECRET = "crime-statistics-integration-test-secret";
 const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
 
@@ -318,6 +320,266 @@ test("date-only filters include complete boundary days and exclude records outsi
         { date: "2026-01-02", count: 2 },
         { date: "2026-02-10", count: 1 },
     ]);
+});
+
+test("statistics reconcile with source records after FIR create, update, and deletion", async () => {
+    const expectedSnapshot = async () => {
+        const firs = await FIR.find({ registeredBy: officerA._id }).lean();
+        const firIds = firs.map(({ _id }) => _id);
+        const cases = await Case.find({ firId: { $in: firIds } }).lean();
+        const linkedFirById = new Map(firs.map((fir) => [String(fir._id), fir]));
+        const group = (records, keyFor) => {
+            const counts = new Map();
+            for (const record of records) {
+                const key = keyFor(record);
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+            return [...counts.entries()]
+                .sort(([left], [right]) => left === right ? 0
+                    : left === null ? -1
+                        : right === null ? 1
+                            : String(left) < String(right) ? -1 : 1)
+                .map(([key, count]) => [key, count]);
+        };
+        const dateGroup = (value, format) => {
+            const parsed = value ? new Date(value) : null;
+            if (!parsed || Number.isNaN(parsed.getTime())) return "Unknown";
+            const date = parsed.toISOString();
+            if (format === "date") return date.slice(0, 10);
+            if (format === "month") return date.slice(0, 7);
+            return date.slice(0, 4);
+        };
+        const caseStatuses = ["Open", "Under Investigation", "Court Proceedings", "Closed", "Reopened"];
+        const groupedCaseStatuses = group(cases, ({ status }) => status ?? null);
+        const knownStatusCounts = new Map(groupedCaseStatuses);
+        const knownStatuses = caseStatuses.map((status) => [status, knownStatusCounts.get(status) || 0]);
+        const legacyStatuses = groupedCaseStatuses.filter(([status]) => !caseStatuses.includes(status));
+
+        return {
+            firs,
+            cases,
+            expected: {
+                totalFirs: firs.length,
+                crimeTypeStats: group(firs, ({ crimeType }) => crimeType ?? null)
+                    .map(([crimeType, count]) => ({ crimeType, count })),
+                statusStats: group(firs, ({ status }) => status ?? null)
+                    .map(([status, count]) => ({ status, count })),
+                dateStats: group(firs, ({ date }) => dateGroup(date, "date"))
+                    .map(([date, count]) => ({ date, count })),
+                totalCases: cases.length,
+                caseStatusStats: [...knownStatuses, ...legacyStatuses]
+                    .map(([status, count]) => ({ status, count })),
+                monthlyStats: group(cases, ({ startDate }) => dateGroup(startDate, "month"))
+                    .map(([month, count]) => ({ month, count })),
+                yearlyStats: group(cases, ({ startDate }) => dateGroup(startDate, "year"))
+                    .map(([year, count]) => ({ year, count })),
+                caseCrimeTypeStats: group(cases, (record) => {
+                    const crimeType = linkedFirById.get(String(record.firId))?.crimeType;
+                    return typeof crimeType === "string" && crimeType.trim()
+                        ? crimeType.trim()
+                        : "Unspecified";
+                }).map(([crimeType, count]) => ({ crimeType, count })),
+            },
+        };
+    };
+    const assertMatchesSource = async () => {
+        const { expected } = await expectedSnapshot();
+        const response = await request(app)
+            .get("/api/reports/crime-statistics")
+            .set("Authorization", `Bearer ${officerAToken}`);
+        assert.equal(response.status, 200);
+        assert.equal(response.body.data.totalFirs, expected.totalFirs);
+        assert.deepEqual(response.body.data.crimeTypeStats, expected.crimeTypeStats);
+        assert.deepEqual(response.body.data.statusStats, expected.statusStats);
+        assert.deepEqual(response.body.data.dateStats, expected.dateStats);
+        assert.equal(response.body.data.caseStatistics.totalCases, expected.totalCases);
+        assert.deepEqual(response.body.data.caseStatistics.statusStats, expected.caseStatusStats);
+        assert.deepEqual(response.body.data.caseStatistics.monthlyStats, expected.monthlyStats);
+        assert.deepEqual(response.body.data.caseStatistics.yearlyStats, expected.yearlyStats);
+        assert.deepEqual(response.body.data.caseStatistics.crimeTypeStats, expected.caseCrimeTypeStats);
+        return response.body.data;
+    };
+
+    await assertMatchesSource();
+    const criminal = await Criminal.create({
+        criminalId: "STATS-MUTATION-CRIMINAL",
+        fullName: "Synthetic mutation fixture",
+        dateOfBirth: "1990-01-01",
+        gender: "Other",
+        address: "Synthetic test address",
+        status: "active",
+    });
+    const created = await request(app)
+        .post("/api/firs")
+        .set("Authorization", `Bearer ${officerAToken}`)
+        .send({
+            firNo: "STATS-MUTATION-FIR",
+            date: "2026-03-01",
+            policeStation: "Statistics Station",
+            complaint: { complainantName: "Mutation fixture", complaintText: "Create/update statistics fixture" },
+            description: "Synthetic mutation statistics fixture",
+            crimeType: "Theft",
+            location: { address: "1 Test Road", city: "Bengaluru", state: "Karnataka", pincode: "560001" },
+            criminalIds: [criminal._id.toString()],
+        });
+    assert.equal(created.status, 201);
+    const afterCreate = await assertMatchesSource();
+
+    const linkedCase = await createCase(created.body.data, {
+        caseNo: "CS-STATS-MUTATION-FIR",
+        startDate: "2026-03-01",
+        status: "Open",
+        officerId: officerA._id,
+    });
+    const afterLink = await assertMatchesSource();
+    assert.equal(afterLink.totalFirs, afterCreate.totalFirs);
+    assert.equal(afterLink.caseStatistics.totalCases, afterCreate.caseStatistics.totalCases + 1);
+
+    const updated = await request(app)
+        .put(`/api/firs/${created.body.data._id}`)
+        .set("Authorization", `Bearer ${officerAToken}`)
+        .send({ date: "2026-03-02", crimeType: "Fraud", status: "Closed" });
+    assert.equal(updated.status, 200);
+    const afterUpdate = await assertMatchesSource();
+    assert.equal(afterUpdate.crimeTypeStats.find(({ crimeType }) => crimeType === "Fraud").count, 2);
+
+    await Case.deleteOne({ _id: linkedCase._id });
+    await FIR.deleteOne({ _id: created.body.data._id });
+    const afterDelete = await assertMatchesSource();
+    assert.equal(afterDelete.totalFirs, afterCreate.totalFirs - 1);
+    assert.equal(afterDelete.caseStatistics.totalCases, afterCreate.caseStatistics.totalCases);
+});
+
+test("statistics retain legacy values and count records with missing or invalid dates", async () => {
+    const missingFieldsId = new mongoose.Types.ObjectId();
+    const legacyValueId = new mongoose.Types.ObjectId();
+    await FIR.collection.insertMany([
+        {
+            _id: missingFieldsId,
+            firNo: "STATS-LEGACY-MISSING",
+            registeredBy: officerA._id,
+        },
+        {
+            _id: legacyValueId,
+            firNo: "STATS-LEGACY-VALUES",
+            registeredBy: officerA._id,
+            date: "invalid legacy date",
+            crimeType: "Legacy Crime",
+            status: "Legacy FIR Status",
+        },
+    ]);
+    await Case.collection.insertMany([
+        {
+            caseNo: "CS-STATS-LEGACY-INVALID-DATE",
+            firId: legacyValueId,
+            status: "Legacy Case Status",
+            startDate: "invalid legacy date",
+        },
+        {
+            caseNo: "CS-STATS-LEGACY-MISSING-DATE",
+            firId: missingFieldsId,
+        },
+    ]);
+
+    const sourceFirs = await FIR.find({ registeredBy: officerA._id }).lean();
+    const sourceCases = await Case.find({ firId: { $in: sourceFirs.map(({ _id }) => _id) } }).lean();
+    const response = await request(app)
+        .get("/api/reports/crime-statistics")
+        .set("Authorization", `Bearer ${officerAToken}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.totalFirs, sourceFirs.length);
+    assert.equal(response.body.data.caseStatistics.totalCases, sourceCases.length);
+    assert.ok(response.body.data.crimeTypeStats.some(({ crimeType, count }) => crimeType === "Legacy Crime" && count === 1));
+    assert.ok(response.body.data.crimeTypeStats.some(({ crimeType, count }) => crimeType === null && count === 1));
+    assert.ok(response.body.data.statusStats.some(({ status, count }) => status === "Legacy FIR Status" && count === 1));
+    assert.ok(response.body.data.statusStats.some(({ status, count }) => status === null && count === 1));
+    assert.equal(response.body.data.dateStats.filter(({ date }) => date === "Unknown").reduce((sum, row) => sum + row.count, 0), 2);
+    assert.ok(response.body.data.caseStatistics.statusStats.some(({ status, count }) => status === "Legacy Case Status" && count === 1));
+    assert.ok(response.body.data.caseStatistics.statusStats.some(({ status, count }) => status === null && count === 1));
+    assert.ok(response.body.data.caseStatistics.monthlyStats.some(({ month, count }) => month === "Unknown" && count === 2));
+    assert.ok(response.body.data.caseStatistics.yearlyStats.some(({ year, count }) => year === "Unknown" && count === 2));
+});
+
+test("date range boundaries include UTC leap day and separate month and year groups", async () => {
+    const dateFixtures = [
+        ["STATS-BOUNDARY-2023", "2023-12-31T23:59:59.999Z"],
+        ["STATS-BOUNDARY-2024-START", "2024-01-01T00:00:00.000Z"],
+        ["STATS-BOUNDARY-LEAP", "2024-02-29T23:59:59.999Z"],
+        ["STATS-BOUNDARY-MARCH", "2024-03-01T00:00:00.000Z"],
+    ];
+    for (const [firNo, date] of dateFixtures) {
+        const fir = await createFIR(officerA._id, {
+            firNo,
+            date,
+            crimeType: "Kidnapping",
+            status: "Open",
+            city: "Bengaluru",
+        });
+        await createCase(fir, {
+            caseNo: `CS-${firNo}`,
+            startDate: date,
+            status: "Open",
+            officerId: officerA._id,
+        });
+    }
+
+    const leapDay = await request(app)
+        .get("/api/reports/crime-statistics?crimeType=Kidnapping&fromDate=2024-02-29&toDate=2024-02-29")
+        .set("Authorization", `Bearer ${officerAToken}`);
+    assert.equal(leapDay.status, 200);
+    assert.equal(leapDay.body.data.totalFirs, 1);
+    assert.deepEqual(leapDay.body.data.dateStats, [{ date: "2024-02-29", count: 1 }]);
+    assert.equal(leapDay.body.data.caseStatistics.totalCases, 1);
+    assert.deepEqual(leapDay.body.data.caseStatistics.monthlyStats, [{ month: "2024-02", count: 1 }]);
+    assert.deepEqual(leapDay.body.data.caseStatistics.yearlyStats, [{ year: "2024", count: 1 }]);
+
+    const allBoundaryDates = await request(app)
+        .get("/api/reports/crime-statistics?crimeType=Kidnapping")
+        .set("Authorization", `Bearer ${officerAToken}`);
+    assert.equal(allBoundaryDates.status, 200);
+    assert.equal(allBoundaryDates.body.data.totalFirs, 4);
+    assert.deepEqual(allBoundaryDates.body.data.caseStatistics.monthlyStats, [
+        { month: "2023-12", count: 1 },
+        { month: "2024-01", count: 1 },
+        { month: "2024-02", count: 1 },
+        { month: "2024-03", count: 1 },
+    ]);
+    assert.deepEqual(allBoundaryDates.body.data.caseStatistics.yearlyStats, [
+        { year: "2023", count: 1 },
+        { year: "2024", count: 3 },
+    ]);
+});
+
+test("statistics and map endpoints reject invalid, expired, and inactive-account tokens", async () => {
+    const expiredToken = jwt.sign(
+        { userId: officerA.userId.toString(), role: "officer" },
+        process.env.JWT_SECRET,
+        { expiresIn: -1 },
+    );
+    const inactiveUser = await User.create({
+        username: "stats-inactive-user",
+        email: "stats-inactive-user@crms.test",
+        passwordHash: await bcrypt.hash(password, 4),
+        role: "officer",
+        status: "approved",
+        isActive: false,
+    });
+    const inactiveToken = jwt.sign(
+        { userId: inactiveUser._id.toString(), role: "officer" },
+        process.env.JWT_SECRET,
+    );
+
+    for (const token of ["invalid-token", expiredToken]) {
+        for (const path of ["/api/reports/crime-statistics", "/api/firs/map"]) {
+            const response = await request(app).get(path).set("Authorization", `Bearer ${token}`);
+            assert.equal(response.status, 401, `${path} must reject invalid or expired tokens`);
+        }
+    }
+    for (const path of ["/api/reports/crime-statistics", "/api/firs/map"]) {
+        const response = await request(app).get(path).set("Authorization", `Bearer ${inactiveToken}`);
+        assert.equal(response.status, 403, `${path} must reject inactive accounts`);
+        assert.equal(response.body.error, "ACCOUNT_INACTIVE");
+    }
 });
 
 test("investigating officers cannot create reports for cases outside their assignment scope", async () => {

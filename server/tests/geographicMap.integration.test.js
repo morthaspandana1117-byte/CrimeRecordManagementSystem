@@ -197,6 +197,10 @@ test("map API returns only valid coordinates, safe marker details, and authorize
     assert.equal(ownRecords.body.data.totalRecords, 4);
     assert.equal(ownRecords.body.data.mappedRecords, 1);
     assert.equal(ownRecords.body.data.unmappedRecords, 3);
+    assert.equal(
+        ownRecords.body.data.mappedRecords + ownRecords.body.data.unmappedRecords,
+        ownRecords.body.data.totalRecords,
+    );
     assert.deepEqual(ownRecords.body.data.records.map((record) => record.firNo), ["GEO-FIR-MAPPED"]);
     assert.deepEqual(Object.keys(ownRecords.body.data.records[0]).sort(), [
         "_id", "caseNo", "caseStatus", "crimeType", "date", "firNo", "latitude",
@@ -205,6 +209,18 @@ test("map API returns only valid coordinates, safe marker details, and authorize
     assert.equal(ownRecords.body.data.records[0].complaint, undefined);
     assert.equal(ownRecords.body.data.records[0].location.address, undefined);
     assert.equal(ownRecords.body.data.records[0].caseNo, "GEO-CASE-CLOSED");
+
+    for (const query of [
+        "crimeType=Theft",
+        "fromDate=2026-10-12",
+        "toDate=2026-10-12",
+        "fromDate=2026-10-12&toDate=2026-10-12&crimeType=Theft",
+    ]) {
+        const filtered = await request(app).get(`/api/firs/map?${query}`).set(auth("a"));
+        assert.equal(filtered.status, 200, query);
+        assert.equal(filtered.body.data.totalRecords, 4, query);
+        assert.equal(filtered.body.data.mappedRecords, 1, query);
+    }
 
     const caseFilter = await request(app)
         .get("/api/firs/map?caseStatus=Closed&crimeType=Theft&fromDate=2026-10-12&toDate=2026-10-12")
@@ -243,4 +259,66 @@ test("map endpoint rejects unsupported filters and invalid dates", async () => {
     assert.equal(empty.body.data.mappedRecords, 0);
     assert.equal(empty.body.data.unmappedRecords, 0);
     assert.deepEqual(empty.body.data.records, []);
+});
+
+test("map counts reconcile with source records and exclude partial or invalid legacy coordinates", async () => {
+    const makeLegacyFIR = (firNo, coordinates = {}) => ({
+        firNo,
+        date: new Date("2026-11-02T00:00:00.000Z"),
+        policeStation: "Geo Test Station",
+        complaint: {
+            complainantName: "Sensitive legacy complainant",
+            complainantPhone: "5551234567",
+            complaintText: "Private complaint text",
+        },
+        description: "Synthetic legacy coordinate fixture",
+        crimeType: "Other",
+        location: { address: "Private address", city: "Test City", state: "Test State", pincode: "000000" },
+        registeredBy: officers.a._id,
+        criminalIds: [criminal._id],
+        status: "Open",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        ...coordinates,
+    });
+    await FIR.collection.insertMany([
+        makeLegacyFIR("GEO-LEGACY-EDGE-A", { latitude: -90, longitude: 180 }),
+        makeLegacyFIR("GEO-LEGACY-EDGE-B", { latitude: 90, longitude: -180 }),
+        makeLegacyFIR("GEO-LEGACY-PARTIAL", { latitude: 12.5 }),
+        makeLegacyFIR("GEO-LEGACY-OUT-OF-RANGE", { latitude: 90.01, longitude: 0 }),
+        makeLegacyFIR("GEO-LEGACY-MISSING"),
+    ]);
+
+    const sourceRecords = await FIR.find({
+        registeredBy: officers.a._id,
+        crimeType: "Other",
+    }).lean();
+    const response = await request(app)
+        .get("/api/firs/map?crimeType=Other")
+        .set(auth("a"));
+    assert.equal(response.status, 200);
+    assert.equal(response.body.data.totalRecords, sourceRecords.length);
+    assert.equal(response.body.data.totalRecords, 5);
+    assert.equal(response.body.data.mappedRecords, 2);
+    assert.equal(response.body.data.unmappedRecords, 3);
+    assert.equal(response.body.data.mappedRecords + response.body.data.unmappedRecords, sourceRecords.length);
+    assert.deepEqual(
+        response.body.data.records.map(({ firNo }) => firNo).sort(),
+        ["GEO-LEGACY-EDGE-A", "GEO-LEGACY-EDGE-B"],
+    );
+    const allowedMarkerFields = new Set([
+        "_id", "caseNo", "caseStatus", "crimeType", "date", "firNo", "latitude",
+        "location", "longitude", "policeStation", "status",
+    ]);
+    assert.ok(response.body.data.records.every((record) =>
+        Object.keys(record).every((key) => allowedMarkerFields.has(key)),
+    ));
+    assert.equal(JSON.stringify(response.body.data.records).includes("Sensitive legacy complainant"), false);
+    assert.equal(JSON.stringify(response.body.data.records).includes("5551234567"), false);
+    assert.equal(JSON.stringify(response.body.data.records).includes("Private address"), false);
+    const missingCoordinates = await FIR.collection.findOne({ firNo: "GEO-LEGACY-MISSING" });
+    const partialCoordinates = await FIR.collection.findOne({ firNo: "GEO-LEGACY-PARTIAL" });
+    assert.equal(missingCoordinates.latitude, undefined);
+    assert.equal(missingCoordinates.longitude, undefined);
+    assert.equal(partialCoordinates.longitude, undefined);
 });
