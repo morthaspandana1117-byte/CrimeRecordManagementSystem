@@ -27,6 +27,9 @@ const firStatuses = ["Open", "Registered", "Under Investigation", "Charge Sheet 
 const caseStatuses = ["Open", "Under Investigation", "Court Proceedings", "Closed", "Reopened"];
 const crimeStatisticFilters = new Set(["fromDate", "toDate", "crimeType", "status", "caseStatus", "city", "state", "pincode", "policeStation"]);
 const scalar = (value) => typeof value === "string" && value.trim().length > 0;
+const safeDate = (field) => ({
+    $convert: { input: field, to: "date", onError: null, onNull: null },
+});
 
 const parseCalendarDate = (value) => {
     if (!scalar(value) || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -102,7 +105,7 @@ const getCrimeStatisticsData = async (query, authority) => {
                 crimeTypeStats: [{ $group: { _id: "$crimeType", count: { $sum: 1 } } }, { $sort: { _id: 1 } }],
                 statusStats: [{ $group: { _id: "$status", count: { $sum: 1 } } }, { $sort: { _id: 1 } }],
                 locationStats: [{ $group: { _id: { city: "$location.city", state: "$location.state" }, count: { $sum: 1 } } }, { $sort: { "_id.state": 1, "_id.city": 1 } }],
-                dateStats: [{ $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: "UTC" } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }],
+                dateStats: [{ $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: safeDate("$date"), timezone: "UTC", onNull: "Unknown" } }, count: { $sum: 1 } } }, { $sort: { _id: 1 } }],
             },
         },
     ];
@@ -156,11 +159,11 @@ const getCrimeStatisticsData = async (query, authority) => {
                 total: [{ $count: "count" }],
                 statusStats: [{ $group: { _id: "$status", count: { $sum: 1 } } }],
                 monthlyStats: [
-                    { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$startDate", timezone: "UTC" } }, count: { $sum: 1 } } },
+                    { $group: { _id: { $dateToString: { format: "%Y-%m", date: safeDate("$startDate"), timezone: "UTC", onNull: "Unknown" } }, count: { $sum: 1 } } },
                     { $sort: { _id: 1 } },
                 ],
                 yearlyStats: [
-                    { $group: { _id: { $dateToString: { format: "%Y", date: "$startDate", timezone: "UTC" } }, count: { $sum: 1 } } },
+                    { $group: { _id: { $dateToString: { format: "%Y", date: safeDate("$startDate"), timezone: "UTC", onNull: "Unknown" } }, count: { $sum: 1 } } },
                     { $sort: { _id: 1 } },
                 ],
                 crimeTypeStats: [
@@ -197,7 +200,12 @@ const getCrimeStatisticsData = async (query, authority) => {
 
     const caseCounts = new Map(caseResult.statusStats.map(({ _id, count }) => [_id, count]));
     const totalCases = caseResult.total[0]?.count || 0;
-    const statusStats = caseStatuses.map((status) => ({ status, count: caseCounts.get(status) || 0 }));
+    const knownStatusStats = caseStatuses.map((status) => ({ status, count: caseCounts.get(status) || 0 }));
+    const legacyStatusStats = caseResult.statusStats
+        .filter(({ _id }) => !caseStatuses.includes(_id))
+        .sort(({ _id: left }, { _id: right }) => String(left ?? "").localeCompare(String(right ?? "")))
+        .map(({ _id, count }) => ({ status: _id, count }));
+    const statusStats = [...knownStatusStats, ...legacyStatusStats];
     const closedCases = caseCounts.get("Closed") || 0;
 
     return {
