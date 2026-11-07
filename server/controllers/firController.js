@@ -2,6 +2,8 @@ const FIR = require("../models/FIR");
 const Case = require("../models/Case");
 const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
+const PoliceStation = require("../models/PoliceStation");
+const { resolveActivePoliceStation } = require("../services/policeStationService");
 const {
     isValidObjectId,
     isNonEmptyString,
@@ -29,6 +31,7 @@ const allowedFields = [
     "firNo",
     "date",
     "policeStation",
+    "policeStationId",
     "complaint",
     "description",
     "crimeType",
@@ -82,6 +85,39 @@ const validateFIRStatus = (value) => normalizeFIRStatus(value) !== null;
 
 const canAccessFIR = (req, fir) =>
     canAccessAssignedRecord(req.authority, [fir?.registeredBy]);
+
+const getAssignedStationForOfficer = async (res, officer) => {
+    if (!officer?.stationId) {
+        res.status(403).json({
+            success: false,
+            message: "An administrator must assign your police station before FIR operations",
+            error: "STATION_ASSIGNMENT_REQUIRED",
+        });
+        return null;
+    }
+
+    const station = await PoliceStation.findOne({
+        _id: officer.stationId,
+        isActive: true,
+    }).select("_id name");
+    if (!station) {
+        res.status(403).json({
+            success: false,
+            message: "Your assigned police station is unavailable or inactive",
+            error: "STATION_ASSIGNMENT_INVALID",
+        });
+        return null;
+    }
+    return station;
+};
+
+const resolveFIRStation = async (res, stationId) => {
+    if (!stationId) {
+        invalid(res, "policeStationId is required", "POLICE_STATION_REFERENCE_REQUIRED");
+        return null;
+    }
+    return resolveActivePoliceStation(res, stationId, "policeStationId");
+};
 
 const buildFIRQueryFilters = ({ search, status, crimeType } = {}) => {
     const filter = {};
@@ -319,7 +355,7 @@ const validateFIR = async (res, body, partial = false, req = null) => {
 
 const strikeAllowedFields = (body) =>
     Object.fromEntries(
-        Object.entries(body).filter(([key]) => allowedFields.includes(key)),
+        Object.entries(body || {}).filter(([key]) => allowedFields.includes(key)),
     );
 
 const createFIR = async (req, res) => {
@@ -341,6 +377,19 @@ const createFIR = async (req, res) => {
 
             const officerEligibility = await ensureEligibleOfficer(req, res, officerForUser._id);
             if (!officerEligibility.valid) return officerEligibility.response;
+            const assignedStation = await getAssignedStationForOfficer(res, officerForUser);
+            if (!assignedStation) return;
+            const selectedStation = await resolveFIRStation(res, payload.policeStationId);
+            if (!selectedStation) return;
+            if (String(selectedStation._id) !== String(assignedStation._id)) {
+                return res.status(403).json({
+                    success: false,
+                    message: "You may only create FIRs for your assigned police station",
+                    error: "POLICE_STATION_ASSIGNMENT_DENIED",
+                });
+            }
+            payload.policeStationId = assignedStation._id;
+            payload.policeStation = assignedStation.name;
             payload.registeredBy = officerForUser._id;
         } else if (systemRole === "system_admin") {
             if (payload.registeredBy && payload.registeredBy !== "") {
@@ -349,6 +398,14 @@ const createFIR = async (req, res) => {
             } else {
                 payload.registeredBy = null;
             }
+        }
+
+        if (systemRole !== "officer") {
+            return res.status(403).json({
+                success: false,
+                message: "Only an authenticated officer can create an FIR",
+                error: "FIR_CREATION_DENIED",
+            });
         }
 
         if (!payload.registeredBy) {
@@ -463,15 +520,16 @@ const updateFIR = async (req, res) => {
             return invalid(res, "No valid FIR fields were provided");
         }
 
-        const existingFIR = await FIR.findById(req.params.id).select("registeredBy");
+        const existingFIR = await FIR.findById(req.params.id).select("registeredBy policeStation policeStationId");
         if (!existingFIR) return notFound(res, "FIR");
         if (!canAccessFIR(req, existingFIR)) {
             return res.status(403).json({ success: false, message: "You may only update relevant FIRs", error: "FIR_ACCESS_DENIED" });
         }
 
         const systemRole = req.authority?.systemRole || req.user?.systemRole || (req.user?.role === "admin" ? "system_admin" : req.user?.role);
+        let officer = null;
         if (systemRole === "officer") {
-            const officer = await resolveOfficerForUser(req.user.userId);
+            officer = await resolveOfficerForUser(req.user.userId);
             if (!officer) {
                 return res.status(403).json({
                     success: false,
@@ -479,6 +537,39 @@ const updateFIR = async (req, res) => {
                     error: "OFFICER_INELIGIBLE",
                 });
             }
+        }
+
+        if (systemRole === "officer") {
+            const requestedStationId = updates.policeStationId;
+            const existingStationId = existingFIR.policeStationId;
+            const stationIdChanged = requestedStationId !== undefined &&
+                String(requestedStationId || "") !== String(existingStationId || "");
+            const stationNameChanged = updates.policeStation !== undefined &&
+                updates.policeStation !== existingFIR.policeStation;
+
+            if (stationIdChanged || stationNameChanged) {
+                return res.status(403).json({
+                    success: false,
+                    message: "The police station assigned to an FIR cannot be changed",
+                    error: "POLICE_STATION_ASSIGNMENT_DENIED",
+                });
+            }
+
+            delete updates.policeStationId;
+            delete updates.policeStation;
+        } else if (updates.policeStationId !== undefined) {
+            const selectedStation = await resolveFIRStation(res, updates.policeStationId);
+            if (!selectedStation) return;
+            updates.policeStationId = selectedStation._id;
+            updates.policeStation = selectedStation.name;
+        } else if (updates.policeStation !== undefined && existingFIR.policeStationId) {
+            return invalid(
+                res,
+                "A linked police station can only be changed using policeStationId",
+                "POLICE_STATION_REFERENCE_REQUIRED",
+            );
+        }
+        if (systemRole === "officer") {
             // Editing never transfers ownership: the registering officer is kept.
             if (updates.registeredBy && String(updates.registeredBy) !== String(existingFIR.registeredBy)) {
                 return res.status(403).json({

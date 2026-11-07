@@ -64,6 +64,19 @@ const officerSchema = new mongoose.Schema(
             trim: true,
         },
 
+        stationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "PoliceStation",
+            validate: {
+                async validator(value) {
+                    if (value == null) return true;
+                    const PoliceStation = mongoose.models.PoliceStation || require("./PoliceStation");
+                    return Boolean(await PoliceStation.exists({ _id: value, isActive: true }));
+                },
+                message: "stationId must reference an active police station",
+            },
+        },
+
         phoneNumber: {
             type: String,
             required: true,
@@ -92,5 +105,7 @@ const officerSchema = new mongoose.Schema(
         timestamps: true,
     },
 );
+
+officerSchema.index({ stationId: 1 });
 
 module.exports = mongoose.model("Officer", officerSchema);

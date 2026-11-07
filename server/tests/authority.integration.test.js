@@ -12,6 +12,7 @@ const User = require("../models/User");
 const Officer = require("../models/Officer");
 const Case = require("../models/Case");
 const Report = require("../models/Report");
+const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
 let app;
@@ -19,6 +20,7 @@ const password = "Authority@123";
 const tokens = {};
 const officers = {};
 let accountStatusTarget;
+let station;
 
 const rankFixture = {
     investigating_officer: "authority-investigating",
@@ -63,6 +65,7 @@ test.before(async () => {
     }
     await mongoose.connect(mongoUri);
     app = createApp();
+    station = await PoliceStation.create({ name: "Authority Station", code: "AUTH-01" });
 
     const passwordHash = await bcrypt.hash(password, 10);
     for (const [rank, username] of Object.entries(rankFixture)) {
@@ -82,6 +85,7 @@ test.before(async () => {
             rank,
             department: "Criminal Investigation",
             station: "Authority Station",
+            stationId: station._id,
             phoneNumber: "5550201000",
             address: "Authority Test Avenue",
             joiningDate: "2020-01-01",
@@ -126,6 +130,7 @@ test.before(async () => {
         rank: "investigating_officer",
         department: "Criminal Investigation",
         station: "Authority Station",
+        stationId: station._id,
         phoneNumber: "5550201001",
         address: "Authority Target Avenue",
         joiningDate: "2020-01-01",
@@ -269,7 +274,15 @@ test("Officer Management permissions follow system role, not officer rank", asyn
     assert.equal(adminList.status, 200);
     const adminAccount = adminList.body.data.find((record) => String(record._id) === String(accountStatusTarget._id));
     assert.ok(adminAccount);
-    assert.deepEqual(Object.keys(adminAccount).sort(), ["_id", "accountStatus", "approvalStatus", "email", "username"]);
+    assert.deepEqual(Object.keys(adminAccount).sort(), [
+        "_id",
+        "accountStatus",
+        "approvalStatus",
+        "email",
+        "stationId",
+        "stationName",
+        "username",
+    ]);
 
     const adminDetails = await request(app)
         .get(`/api/officers/${accountStatusTarget._id}`)

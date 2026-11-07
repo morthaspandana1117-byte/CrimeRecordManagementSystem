@@ -13,12 +13,14 @@ const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
+const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
 let app;
 let officers;
 let tokens;
 let criminal;
+let station;
 const password = "GeoMap@123";
 const auth = (officer) => ({ Authorization: `Bearer ${tokens[officer]}` });
 
@@ -39,6 +41,7 @@ const createOfficer = async (username, rank, badgeNumber) => {
         rank,
         department: "Criminal Investigation",
         station: "Geo Test Station",
+        stationId: station._id,
         phoneNumber: "5550101000",
         address: "Synthetic test address",
         joiningDate: "2020-01-01",
@@ -53,6 +56,7 @@ const firPayload = (firNo, overrides = {}) => ({
     firNo,
     date: "2026-10-12",
     policeStation: "Geo Test Station",
+    policeStationId: String(station._id),
     complaint: { complainantName: "Synthetic complainant", complaintText: "Synthetic map test record" },
     description: "Synthetic geographic map test",
     crimeType: "Theft",
@@ -78,6 +82,7 @@ test.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-geographic-map"));
     app = createApp();
+    station = await PoliceStation.create({ name: "Geo Test Station", code: "GEO-01" });
     officers = {};
     tokens = {};
 

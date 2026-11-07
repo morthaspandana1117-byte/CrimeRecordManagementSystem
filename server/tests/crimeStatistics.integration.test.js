@@ -14,6 +14,7 @@ const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
+const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
 let app;
@@ -23,6 +24,7 @@ let inspector;
 let officerAToken;
 let inspectorToken;
 let adminToken;
+let station;
 const password = "CrimeStats@123";
 
 const createAccount = async ({ username, rank }) => {
@@ -42,6 +44,7 @@ const createAccount = async ({ username, rank }) => {
         rank,
         department: "Criminal Investigation",
         station: "Statistics Station",
+        stationId: station._id,
         phoneNumber: "5550201000",
         address: "Statistics Test Avenue",
         joiningDate: "2020-01-01",
@@ -59,6 +62,7 @@ const createFIR = (registeredBy, data) => FIR.create({
     firNo: data.firNo,
     date: data.date,
     policeStation: "Statistics Station",
+    policeStationId: station._id,
     complaint: { complainantName: "Test Complainant", complaintText: "Test complaint" },
     description: "Statistics fixture",
     crimeType: data.crimeType,
@@ -88,6 +92,7 @@ test.before(async () => {
     }
     await mongoose.connect(mongoUri);
     app = createApp();
+    station = await PoliceStation.create({ name: "Statistics Station", code: "STATS-01" });
     officerA = await createAccount({ username: "stats-officer-a", rank: "investigating_officer" });
     officerB = await createAccount({ username: "stats-officer-b", rank: "investigating_officer" });
     inspector = await createAccount({ username: "stats-inspector", rank: "inspector" });
@@ -416,6 +421,7 @@ test("statistics reconcile with source records after FIR create, update, and del
             firNo: "STATS-MUTATION-FIR",
             date: "2026-03-01",
             policeStation: "Statistics Station",
+            policeStationId: String(station._id),
             complaint: { complainantName: "Mutation fixture", complaintText: "Create/update statistics fixture" },
             description: "Synthetic mutation statistics fixture",
             crimeType: "Theft",

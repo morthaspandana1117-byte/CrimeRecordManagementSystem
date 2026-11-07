@@ -3,6 +3,8 @@ const bcrypt = require("bcryptjs");
 
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const PoliceStation = require("../models/PoliceStation");
+const { resolveActivePoliceStation } = require("../services/policeStationService");
 const auditService = require("../services/auditService");
 const {
     normalizeOfficerManagementRank,
@@ -26,7 +28,6 @@ const officerFields = [
     "name",
     "rank",
     "department",
-    "station",
     "phoneNumber",
     "address",
     "joiningDate",
@@ -168,10 +169,20 @@ const registerOfficer = async (req, res) => {
             name,
             rank,
             department,
-            station,
             phoneNumber,
             address,
         };
+
+        if (Object.hasOwn(req.body || {}, "stationId")) {
+            return res.status(403).json({
+                success: false,
+                message: "Station assignments are established by an administrator after registration",
+                error: "STATION_ASSIGNMENT_DENIED",
+            });
+        }
+        if (!isNonEmptyString(station)) {
+            return invalid(res, "station must not be empty", "INVALID_FIELD");
+        }
 
         for (const [field, value] of Object.entries(requiredStrings)) {
             if (!isNonEmptyString(value)) {
@@ -181,6 +192,7 @@ const registerOfficer = async (req, res) => {
                     "INVALID_FIELD"
                 );
             }
+
         }
 
         const normalizedEmail = email.toLowerCase();
@@ -269,7 +281,7 @@ const registerOfficer = async (req, res) => {
             phoneNumber: phoneNumber.trim(),
             address: address.trim(),
             joiningDate,
-            status: "active",
+            status: "inactive",
         });
 
         await officer.save({ session });
@@ -297,6 +309,8 @@ const registerOfficer = async (req, res) => {
                 rank: officer.rank,
                 department: officer.department,
                 station: officer.station,
+                stationId: null,
+                requestedStation: officer.station,
                 status: "pending",
             },
         });
@@ -328,8 +342,9 @@ const getAllOfficers = async (req, res) => {
 
         if (req.authority?.systemRole === "system_admin") {
             const accounts = await Officer.find()
-                .select("userId status")
-                .populate("userId", "username email role isActive status");
+                .select("userId status station stationId")
+                .populate("userId", "username email role isActive status")
+                .populate("stationId", "name");
 
             const filteredAccounts = accounts.filter((officer) => {
                 const user = officer.userId;
@@ -347,6 +362,8 @@ const getAllOfficers = async (req, res) => {
                 email: officer.userId.email,
                 approvalStatus: officer.userId.status || "approved",
                 accountStatus: officer.userId.isActive && officer.status === "active" ? "active" : "inactive",
+                stationId: officer.stationId?._id || null,
+                stationName: officer.stationId?.name || officer.station,
             }));
 
             return res.status(200).json({
@@ -358,6 +375,7 @@ const getAllOfficers = async (req, res) => {
 
         let officers = await Officer.find()
             .populate("userId", "username email role isActive status")
+            .populate("stationId", "name")
             .select("-__v");
 
         if (req.authority?.systemRole !== "system_admin") {
@@ -455,7 +473,8 @@ const updateOfficer = async (req, res) => {
         }
 
         const officer = await Officer.findById(req.params.id)
-            .populate("userId", "username email role isActive status");
+            .populate("userId", "username email role isActive status")
+            .populate("stationId", "name");
 
         if (!officer) {
             return notFound(res, "Officer");
@@ -466,6 +485,14 @@ const updateOfficer = async (req, res) => {
                 success: false,
                 message: "You may only manage officers of a strictly lower rank",
                 error: "OFFICER_MANAGEMENT_DENIED",
+            });
+        }
+
+        if (Object.hasOwn(req.body || {}, "station") || Object.hasOwn(req.body || {}, "stationId")) {
+            return res.status(403).json({
+                success: false,
+                message: "Station assignments can only be changed by a system administrator",
+                error: "STATION_ASSIGNMENT_DENIED",
             });
         }
 
@@ -581,6 +608,33 @@ const updateOfficer = async (req, res) => {
     }
 };
 
+const updateOfficerStation = async (req, res) => {
+    try {
+        if (!isValidObjectId(req.params.id)) {
+            return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
+        }
+        const station = await resolveActivePoliceStation(res, req.body?.stationId, "stationId");
+        if (!station) return;
+        const officer = await Officer.findById(req.params.id);
+        if (!officer) return notFound(res, "Officer");
+
+        officer.stationId = station._id;
+        officer.station = station.name;
+        await officer.save();
+        return res.status(200).json({
+            success: true,
+            message: "Officer station updated successfully",
+            data: {
+                _id: officer._id,
+                stationId: station._id,
+                station: station.name,
+            },
+        });
+    } catch (error) {
+        return handleError(res, error, "Update officer station error");
+    }
+};
+
 const setOfficerApprovalStatus = (status, message) => async (req, res) => {
     try {
         if (!isValidObjectId(req.params.id)) {
@@ -613,6 +667,22 @@ const setOfficerApprovalStatus = (status, message) => async (req, res) => {
                 message: "Only pending officer registrations can be reviewed",
                 error: "OFFICER_NOT_PENDING",
             });
+        }
+
+        if (status === "approved") {
+            if (!officer.stationId) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Assign an active police station before approving this officer",
+                    error: "STATION_ASSIGNMENT_REQUIRED",
+                });
+            }
+            const station = await resolveActivePoliceStation(res, officer.stationId, "stationId");
+            if (!station) return;
+            if (officer.status !== "active") {
+                officer.status = "active";
+                await officer.save();
+            }
         }
 
         user.status = status;
@@ -734,7 +804,7 @@ const updateOfficerAccountStatus = async (req, res) => {
         let updatedUser;
         await session.withTransaction(async () => {
             const freshOfficer = await Officer.findById(req.params.id)
-                .select("officerId rank status userId name")
+                .select("officerId rank status userId name stationId")
                 .session(session)
                 .lean();
             if (!freshOfficer) {
@@ -752,6 +822,30 @@ const updateOfficerAccountStatus = async (req, res) => {
                 .lean();
             if (!freshUser || freshUser.role !== "officer") {
                 throw Object.assign(new Error("Linked officer account not found"), { code: "USER_NOT_FOUND" });
+            }
+            if (isActive) {
+                if (!freshOfficer.stationId) {
+                    throw Object.assign(new Error("Assign an active police station before activating this officer"), {
+                        code: "STATION_ASSIGNMENT_REQUIRED",
+                    });
+                }
+                if (!isValidObjectId(freshOfficer.stationId)) {
+                    throw Object.assign(new Error("The officer's police station assignment is invalid"), {
+                        code: "STATION_ASSIGNMENT_INVALID",
+                    });
+                }
+                const station = await PoliceStation.findOne({
+                    _id: freshOfficer.stationId,
+                    isActive: true,
+                })
+                    .select("_id")
+                    .session(session)
+                    .lean();
+                if (!station) {
+                    throw Object.assign(new Error("The officer's police station assignment is invalid or inactive"), {
+                        code: "STATION_ASSIGNMENT_INVALID",
+                    });
+                }
             }
             const before = {
                 officerId: freshOfficer.officerId,
@@ -812,6 +906,20 @@ const updateOfficerAccountStatus = async (req, res) => {
         });
     } catch (error) {
         if (error.code === "OFFICER_NOT_FOUND") return notFound(res, "Officer");
+        if (error.code === "STATION_ASSIGNMENT_REQUIRED") {
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+                error: error.code,
+            });
+        }
+        if (error.code === "STATION_ASSIGNMENT_INVALID") {
+            return res.status(400).json({
+                success: false,
+                message: error.message,
+                error: error.code,
+            });
+        }
         if (error.code === "USER_NOT_FOUND") {
             return res.status(404).json({
                 success: false,
@@ -975,6 +1083,7 @@ module.exports = {
     getAllOfficers,
     getOfficerById,
     updateOfficer,
+    updateOfficerStation,
     deleteOfficer,
     approveOfficer,
     rejectOfficer,

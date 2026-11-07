@@ -14,6 +14,7 @@ const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
 const Evidence = require("../models/Evidence");
+const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
 let app;
@@ -22,6 +23,7 @@ let officerToken;
 let investigatingToken;
 let officer;
 let criminal;
+let station;
 
 const password = "Integration@123";
 
@@ -64,6 +66,7 @@ const evidenceSnapshot = async () =>
 
     process.env.MONGO_URI = mongoUri;
     await mongoose.connect(mongoUri);
+    station = await PoliceStation.create({ name: "Central Station", code: "CENTRAL-01" });
     app = createApp();
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -100,6 +103,7 @@ const evidenceSnapshot = async () =>
         rank: "inspector",
         department: "Criminal Investigation",
         station: "Central Station",
+        stationId: station._id,
         phoneNumber: "5550101000",
         address: "1 Test Avenue",
         joiningDate: "2020-01-01",
@@ -113,6 +117,7 @@ const evidenceSnapshot = async () =>
         rank: "investigating_officer",
         department: "Criminal Investigation",
         station: "Central Station",
+        stationId: station._id,
         phoneNumber: "5550101003",
         address: "3 Test Avenue",
         joiningDate: "2020-01-01",
@@ -147,6 +152,7 @@ test("persists the complete evidence lifecycle across case reopening", async () 
             firNo: "INT-FIR-001",
             date: "2026-09-01",
             policeStation: "Central Station",
+            policeStationId: String(station._id),
             complaint: {
                 complainantName: "Integration Complainant",
                 complainantPhone: "5550101002",

@@ -164,7 +164,7 @@ function OfficerDetails() {
                 <InfoField label="Batch Number" value={officer.badgeNumber} />
                 <InfoField label="Rank" value={officer.rank} />
                 <InfoField label="Department" value={officer.department} />
-                <InfoField label="Police station" value={officer.station} />
+                <InfoField label="Police station" value={officer.stationId?.name || officer.station} />
                 <InfoField label="Phone number" value={officer.phoneNumber} />
                 <InfoField label="Joining date" value={formatDate(officer.joiningDate)} />
                 <div className="col-12">

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { createFIR, getAssignableOfficers, getCriminals } from '../services/api'
+import { createFIR, getActivePoliceStations, getAssignableOfficers, getCriminals } from '../services/api'
 import { coordinatePayload, validateOptionalCoordinates } from '../utils/geographicCoordinates'
 
 const initialForm = {
   firNo: '',
   date: '',
-  policeStation: '',
+  policeStationId: '',
   complainantName: '',
   complainantPhone: '',
   complaintText: '',
@@ -39,20 +39,23 @@ function FIRCreate() {
   const [successMessage, setSuccessMessage] = useState('')
   const [officerOptions, setOfficerOptions] = useState([])
   const [criminalOptions, setCriminalOptions] = useState([])
+  const [stationOptions, setStationOptions] = useState([])
 
   useEffect(() => {
     const loadOptions = async () => {
       try {
         setLoadingOptions(true)
-        const [officersResponse, criminalsResponse] = await Promise.all([
+        const [officersResponse, criminalsResponse, stationsResponse] = await Promise.all([
           user?.role === 'admin' ? getAssignableOfficers() : Promise.resolve({ data: { data: [] } }),
           getCriminals({ limit: 100 }),
+          getActivePoliceStations(),
         ])
 
         if (user?.role === 'admin') {
           setOfficerOptions(Array.isArray(officersResponse.data?.data) ? officersResponse.data.data : [])
         }
         setCriminalOptions(Array.isArray(criminalsResponse.data?.data) ? criminalsResponse.data.data : [])
+        setStationOptions(Array.isArray(stationsResponse.data?.data) ? stationsResponse.data.data : [])
       } catch (requestError) {
         setError(requestMessage(requestError, 'Unable to load FIR form options.'))
       } finally {
@@ -81,7 +84,7 @@ function FIRCreate() {
   const validate = () => {
     if (!form.firNo.trim()) return 'FIR number is required.'
     if (!form.date) return 'FIR date is required.'
-    if (!form.policeStation.trim()) return 'Police station is required.'
+    if (!form.policeStationId) return 'Please select an active police station.'
     if (!form.complainantName.trim()) return 'Complainant name is required.'
     if (!form.complaintText.trim()) return 'Complaint text is required.'
     if (!form.description.trim()) return 'Description is required.'
@@ -109,7 +112,7 @@ function FIRCreate() {
     const payload = {
       firNo: form.firNo.trim(),
       date: form.date,
-      policeStation: form.policeStation.trim(),
+      policeStationId: form.policeStationId,
       complaint: {
         complainantName: form.complainantName.trim(),
         complainantPhone: form.complainantPhone.trim(),
@@ -192,8 +195,11 @@ function FIRCreate() {
                 </div>
 
                 <div className="col-12 col-md-6">
-                  <label className="form-label" htmlFor="policeStation">Police station</label>
-                  <input className="form-control" id="policeStation" name="policeStation" onChange={updateField} required value={form.policeStation} />
+                  <label className="form-label" htmlFor="policeStationId">Police station</label>
+                  <select className="form-select" id="policeStationId" name="policeStationId" onChange={updateField} required value={form.policeStationId}>
+                    <option value="">Select an active police station</option>
+                    {stationOptions.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}
+                  </select>
                 </div>
 
                 <div className="col-12 col-md-6">

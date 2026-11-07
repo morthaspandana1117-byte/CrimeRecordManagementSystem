@@ -11,6 +11,7 @@ process.env.JWT_SECRET = "officer-management-authorization-test-secret";
 const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const PoliceStation = require("../models/PoliceStation");
 const AuditLog = require("../models/AuditLog");
 const auditService = require("../services/auditService");
 const { deleteOfficer } = require("../controllers/officerController");
@@ -27,6 +28,7 @@ let tokens;
 let users;
 let officers;
 let passwordHash;
+let station;
 
 const createPendingOfficer = async (username, officerId, badgeNumber) => {
     const user = await User.create({
@@ -45,6 +47,7 @@ const createPendingOfficer = async (username, officerId, badgeNumber) => {
         rank: "constable",
         department: "Criminal Investigation",
         station: "Management Station",
+        stationId: station._id,
         phoneNumber: "5551000000",
         address: "Test Street",
         joiningDate: "2020-01-01",
@@ -56,6 +59,7 @@ const createPendingOfficer = async (username, officerId, badgeNumber) => {
 test.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-officer-management"));
+    station = await PoliceStation.create({ name: "Management Station", code: "MGT-01" });
     app = createApp();
     passwordHash = await bcrypt.hash("Management@123", 10);
     users = {};
@@ -87,6 +91,7 @@ test.before(async () => {
             rank,
             department: "Criminal Investigation",
             station: "Management Station",
+            stationId: station._id,
             phoneNumber: "5551000000",
             address: "Test Street",
             joiningDate: "2020-01-01",

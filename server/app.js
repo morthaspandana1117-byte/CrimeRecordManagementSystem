@@ -14,6 +14,7 @@ const auditRoutes = require("./routes/auditRoutes");
 const searchRoutes = require("./routes/searchRoutes");
 const humanReviewRoutes = require("./routes/humanReviewRoutes");
 const aiEvaluationRoutes = require("./routes/aiEvaluationRoutes");
+const policeStationRoutes = require("./routes/policeStationRoutes");
 
 const createApp = () => {
     const app = express();
@@ -51,6 +52,7 @@ const createApp = () => {
     app.use("/api/search", searchRoutes);
     app.use("/api/human-review", humanReviewRoutes);
     app.use("/api/ai-evaluation", aiEvaluationRoutes);
+    app.use("/api/police-stations", policeStationRoutes);
 
     app.use((error, req, res, next) => {
         if (error?.type === "entity.parse.failed") {

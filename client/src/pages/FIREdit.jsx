@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { getAssignableOfficers, getCriminals, getFIRById, updateFIR } from '../services/api'
+import { getActivePoliceStations, getAssignableOfficers, getCriminals, getFIRById, updateFIR } from '../services/api'
 import { coordinatePayload, validateOptionalCoordinates } from '../utils/geographicCoordinates'
 
 const validCrimeTypes = ['Theft', 'Robbery', 'Murder', 'Assault', 'Kidnapping', 'Fraud', 'Cyber Crime', 'Drug Offense', 'Sexual Offense', 'Property Crime', 'Other']
@@ -19,7 +19,8 @@ const formatDateInput = (value) => {
 const initialForm = {
   firNo: '',
   date: '',
-  policeStation: '',
+  policeStationId: '',
+  legacyPoliceStation: '',
   complainantName: '',
   complainantPhone: '',
   complaintText: '',
@@ -47,15 +48,17 @@ function FIREdit() {
   const [successMessage, setSuccessMessage] = useState('')
   const [officerOptions, setOfficerOptions] = useState([])
   const [criminalOptions, setCriminalOptions] = useState([])
+  const [stationOptions, setStationOptions] = useState([])
 
   const loadData = useCallback(async () => {
     try {
       setLoading(true)
       setError('')
-      const [firResponse, officersResponse, criminalsResponse] = await Promise.all([
+      const [firResponse, officersResponse, criminalsResponse, stationsResponse] = await Promise.all([
         getFIRById(id),
         user?.role === 'admin' ? getAssignableOfficers() : Promise.resolve({ data: { data: [] } }),
         getCriminals({ limit: 100 }),
+        getActivePoliceStations(),
       ])
 
       const fir = firResponse.data?.data
@@ -64,14 +67,17 @@ function FIREdit() {
         return
       }
 
+      const currentStationId = fir.policeStationId?._id || fir.policeStationId || ''
       if (user?.role === 'admin') {
         setOfficerOptions(Array.isArray(officersResponse.data?.data) ? officersResponse.data.data : [])
       }
       setCriminalOptions(Array.isArray(criminalsResponse.data?.data) ? criminalsResponse.data.data : [])
+      setStationOptions(Array.isArray(stationsResponse.data?.data) ? stationsResponse.data.data : [])
       setForm({
         firNo: fir.firNo || '',
         date: formatDateInput(fir.date),
-        policeStation: fir.policeStation || '',
+        policeStationId: stationsResponse.data?.data?.some((station) => station._id === currentStationId) ? currentStationId : '',
+        legacyPoliceStation: fir.policeStation || '',
         complainantName: fir.complaint?.complainantName || '',
         complainantPhone: fir.complaint?.complainantPhone || '',
         complaintText: fir.complaint?.complaintText || '',
@@ -121,7 +127,7 @@ function FIREdit() {
   const validate = () => {
     if (!form.firNo.trim()) return 'FIR number is required.'
     if (!form.date) return 'FIR date is required.'
-    if (!form.policeStation.trim()) return 'Police station is required.'
+    if (form.policeStationId && !stationOptions.some((station) => station._id === form.policeStationId)) return 'Select an active police station.'
     if (!form.complainantName.trim()) return 'Complainant name is required.'
     if (!form.complaintText.trim()) return 'Complaint text is required.'
     if (!form.description.trim()) return 'Description is required.'
@@ -149,7 +155,7 @@ function FIREdit() {
     const payload = {
       firNo: form.firNo.trim(),
       date: form.date,
-      policeStation: form.policeStation.trim(),
+      ...(form.policeStationId ? { policeStationId: form.policeStationId } : {}),
       complaint: {
         complainantName: form.complainantName.trim(),
         complainantPhone: form.complainantPhone.trim(),
@@ -234,8 +240,11 @@ function FIREdit() {
                 </div>
 
                 <div className="col-12 col-md-6">
-                  <label className="form-label" htmlFor="policeStation">Police station</label>
-                  <input className="form-control" id="policeStation" name="policeStation" onChange={updateField} required value={form.policeStation} />
+                  <label className="form-label" htmlFor="policeStationId">Police station</label>
+                  <select className="form-select" id="policeStationId" name="policeStationId" onChange={updateField} value={form.policeStationId}>
+                    <option value="">{form.legacyPoliceStation ? `Legacy station: ${form.legacyPoliceStation} (not linked)` : 'Select an active police station'}</option>
+                    {stationOptions.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}
+                  </select>
                 </div>
 
                 <div className="col-12 col-md-6">

@@ -55,7 +55,7 @@ function Register() {
       <Field help="Exactly 6 letters or numbers." label="Batch number" name="batchNumber" onChange={update} value={form.batchNumber} /><Field label="Full name" name="name" onChange={update} value={form.name} />
       <Field label="Officer ID" name="officerId" onChange={update} value={form.officerId} />
       <Select label="Rank" name="rank" onChange={update} options={officerRankOptions} value={form.rank} /><Select label="Department" name="department" onChange={update} options={departments} value={form.department} />
-      <Field label="Station" name="station" onChange={update} value={form.station} /><Field label="Phone number" name="phoneNumber" onChange={update} value={form.phoneNumber} />
+      <Field help="This is a request only; an administrator assigns the trusted station after review." label="Requested police station" name="station" onChange={update} value={form.station} /><Field label="Phone number" name="phoneNumber" onChange={update} value={form.phoneNumber} />
       <Field label="Joining date" name="joiningDate" onChange={update} type="date" value={form.joiningDate} /><div className="col-12"><label className="form-label" htmlFor="address">Address</label><textarea className="form-control" id="address" name="address" onChange={update} required rows="2" value={form.address} /></div>
     </div><button className="btn btn-primary btn-lg w-100 mt-4" disabled={submitting || Boolean(notice)} type="submit">{submitting ? 'Submitting...' : 'Submit registration'}</button></form>
     <p className="mb-0 mt-4 text-center text-secondary">Already have an account? <Link to="/login">Sign in</Link></p>
