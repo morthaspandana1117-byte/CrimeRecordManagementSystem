@@ -21,6 +21,19 @@ const firSchema = new mongoose.Schema(
             trim: true,
         },
 
+        policeStationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "PoliceStation",
+            validate: {
+                async validator(value) {
+                    if (value == null) return true;
+                    const PoliceStation = mongoose.models.PoliceStation || require("./PoliceStation");
+                    return Boolean(await PoliceStation.exists({ _id: value, isActive: true }));
+                },
+                message: "policeStationId must reference an active police station",
+            },
+        },
+
         complaint: {
             complainantName: {
                 type: String,
@@ -134,5 +147,7 @@ const firSchema = new mongoose.Schema(
         timestamps: true,
     },
 );
+
+firSchema.index({ policeStationId: 1 });
 
 module.exports = mongoose.model("FIR", firSchema);

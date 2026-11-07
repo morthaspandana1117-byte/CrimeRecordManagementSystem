@@ -46,7 +46,7 @@ function OfficerEdit() {
         name: officer.name || '',
         rank: officer.rank || ranks[0],
         department: officer.department || departments[0],
-        station: officer.station || '',
+        station: officer.stationId?.name || officer.station || '',
         phoneNumber: officer.phoneNumber || '',
         address: officer.address || '',
         joiningDate: dateInputValue(officer.joiningDate),
@@ -79,7 +79,7 @@ function OfficerEdit() {
     const email = form.email.trim()
     const password = form.password.trim()
 
-    if (!username || !email || !form.officerId.trim() || !form.badgeNumber.trim() || !form.name.trim() || !form.rank || !form.department || !form.station.trim() || !form.phoneNumber.trim() || !form.address.trim() || !form.joiningDate) {
+    if (!username || !email || !form.officerId.trim() || !form.badgeNumber.trim() || !form.name.trim() || !form.rank || !form.department || !form.phoneNumber.trim() || !form.address.trim() || !form.joiningDate) {
       setError('Please complete all required fields before saving.')
       return
     }
@@ -102,7 +102,6 @@ function OfficerEdit() {
       name: form.name.trim(),
       rank: form.rank,
       department: form.department,
-      station: form.station.trim(),
       phoneNumber: form.phoneNumber.trim(),
       address: form.address.trim(),
       joiningDate: form.joiningDate,
@@ -205,7 +204,8 @@ function OfficerEdit() {
 
                 <div className="col-12 col-md-6">
                   <label className="form-label" htmlFor="station">Police station</label>
-                  <input className="form-control" id="station" name="station" onChange={updateField} required value={form.station} />
+                  <input className="form-control" id="station" name="station" readOnly value={form.station} />
+                  <div className="form-text">Station assignment can only be changed by a system administrator.</div>
                 </div>
 
                 <div className="col-12 col-md-6">

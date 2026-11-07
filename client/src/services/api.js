@@ -56,6 +56,8 @@ export const deactivateOfficer = (id) => api.patch(`/officers/${id}/status`, { a
 export const approveOfficer = (id) => api.patch(`/officers/${id}/approve`)
 export const rejectOfficer = (id) => api.patch(`/officers/${id}/reject`)
 export const getAssignableOfficers = () => api.get('/officers/assignable')
+export const getActivePoliceStations = () => api.get('/police-stations/active')
+export const updateOfficerStation = (id, stationId) => api.patch(`/officers/${id}/station`, { stationId })
 export const getCriminals = (params = {}) => api.get('/criminals', { params })
 export const getCriminalById = (id) => api.get(`/criminals/${id}`)
 export const createCriminal = (criminal) => api.post('/criminals', criminal)

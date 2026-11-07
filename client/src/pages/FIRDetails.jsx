@@ -136,7 +136,7 @@ function FIRDetails() {
               <div className="row g-3">
                 <InfoField label="FIR number" value={fir.firNo} />
                 <InfoField label="Date" value={formatDate(fir.date)} />
-                <InfoField label="Police station" value={fir.policeStation} />
+                <InfoField label="Police station" value={fir.policeStationId?.name || fir.policeStation} />
                 <InfoField label="Crime type" value={fir.crimeType} />
                 <InfoField label="Registered by" value={registeredBy?.name || registeredBy?.officerId || 'Not available'} />
                 <InfoField label="Status" value={fir.status} valueClassName={getStatusClass(fir.status)} />

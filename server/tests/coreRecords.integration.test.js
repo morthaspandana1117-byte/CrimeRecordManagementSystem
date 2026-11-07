@@ -14,12 +14,14 @@ const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
 const Report = require("../models/Report");
+const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
 let app;
 let tokens;
 let officers;
 let criminal;
+let station;
 
 const auth = (key) => ({ Authorization: `Bearer ${tokens[key]}` });
 
@@ -27,6 +29,7 @@ const firPayload = (overrides = {}) => ({
     firNo: "CORE-FIR-001",
     date: "2026-09-01",
     policeStation: "Core Station",
+    policeStationId: String(station._id),
     complaint: {
         complainantName: "Core Complainant",
         complaintText: "A bicycle was stolen outside the market.",
@@ -46,6 +49,7 @@ const firPayload = (overrides = {}) => ({
 test.before(async () => {
     mongoServer = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(mongoServer.getUri("crms-core-records"));
+    station = await PoliceStation.create({ name: "Core Station", code: "CORE-01" });
     // Duplicate firNo detection relies on the unique index being built.
     await FIR.init();
     app = createApp();
@@ -76,6 +80,7 @@ test.before(async () => {
                 rank,
                 department: "Criminal Investigation",
                 station: "Core Station",
+                stationId: station._id,
                 phoneNumber: "5550000000",
                 address: "Core Street",
                 joiningDate: "2020-01-01",

@@ -11,12 +11,14 @@ const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
 const Case = require("../models/Case");
+const PoliceStation = require("../models/PoliceStation");
 
 const ranks = ["sp", "dsp", "inspector", "si", "asi", "head_constable", "constable"];
 const password = "StageOne@123";
 let replSet;
 let app;
 let adminToken;
+let station;
 const tokens = {};
 const officers = {};
 
@@ -44,6 +46,7 @@ const createOfficer = async (rank) => {
         rank,
         department: "Criminal Investigation",
         station: "Stage One Station",
+        stationId: station._id,
         phoneNumber: "5550101000",
         address: "Stage One Avenue",
         joiningDate: "2020-01-01",
@@ -88,6 +91,7 @@ const registrationPayload = (rank, index) => ({
 test.before(async () => {
     replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(replSet.getUri("crms-stage1-ranks"));
+    station = await PoliceStation.create({ name: "Stage One Station", code: "STAGE1-01" });
     app = createApp();
 
     const admin = await User.create({
@@ -121,6 +125,11 @@ test("registration accepts all seven canonical ranks, rejects legacy labels, and
         assert.equal(pendingLogin.status, 403);
         assert.equal(pendingLogin.body.error, "ACCOUNT_PENDING_APPROVAL");
         const officer = await Officer.findOne({ officerId: `REG-${rank}` });
+        const stationAssignment = await request(app)
+            .patch(`/api/officers/${officer._id}/station`)
+            .set("Authorization", `Bearer ${adminToken}`)
+            .send({ stationId: String(station._id) });
+        assert.equal(stationAssignment.status, 200, rank);
         const approval = await request(app)
             .patch(`/api/officers/${officer._id}/approve`)
             .set("Authorization", `Bearer ${adminToken}`);

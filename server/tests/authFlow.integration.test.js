@@ -13,10 +13,12 @@ process.env.JWT_SECRET = "auth-flow-integration-test-secret";
 const createApp = require("../app");
 const User = require("../models/User");
 const Officer = require("../models/Officer");
+const PoliceStation = require("../models/PoliceStation");
 
 let replSet;
 let app;
 let adminToken;
+let station;
 
 const registrationPayload = (overrides = {}) => ({
     username: "flow-officer",
@@ -40,6 +42,11 @@ const registerAndApprove = async (overrides) => {
     const payload = registrationPayload(overrides);
     const registered = await request(app).post("/api/auth/register").send(payload);
     assert.equal(registered.status, 201);
+    const assigned = await request(app)
+        .patch(`/api/officers/${registered.body.data.id}/station`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ stationId: String(station._id) });
+    assert.equal(assigned.status, 200);
     const approved = await request(app)
         .patch(`/api/officers/${registered.body.data.id}/approve`)
         .set("Authorization", `Bearer ${adminToken}`);
@@ -53,6 +60,7 @@ test.before(async () => {
     replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
     await mongoose.connect(replSet.getUri("crms-auth-flow"));
     await Promise.all([User.init(), Officer.init()]);
+    station = await PoliceStation.create({ name: "Auth Flow Station", code: "AUTH-FLOW-01" });
     app = createApp();
 
     await User.create({
@@ -230,6 +238,11 @@ test("registered officers stay locked out until an admin approves them, then gai
     assert.equal(unauthenticatedApprove.status, 401);
     assert.equal((await User.findById(user._id)).status, "pending");
 
+    const stationAssignment = await request(app)
+        .patch(`/api/officers/${officer._id}/station`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ stationId: String(station._id) });
+    assert.equal(stationAssignment.status, 200);
     const approved = await request(app)
         .patch(`/api/officers/${officer._id}/approve`)
         .set("Authorization", `Bearer ${adminToken}`);
