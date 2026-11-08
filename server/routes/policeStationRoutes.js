@@ -6,8 +6,8 @@ const auditCapture = require("../middleware/auditCapture");
 
 const router = express.Router();
 
+router.get("/active", controller.listActivePoliceStations);
 router.use(authMiddleware, resolveAuthority);
-router.get("/active", requireAuthority({ ranks: OFFICER_RANKS, systemRoles: ["system_admin"] }), controller.listActivePoliceStations);
 router.use(requireAuthority({ systemRoles: ["system_admin"] }));
 router.use(auditCapture);
 router.post("/", controller.createPoliceStation);

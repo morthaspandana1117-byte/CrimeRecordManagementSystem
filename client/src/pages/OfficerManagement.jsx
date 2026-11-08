@@ -4,12 +4,10 @@ import { useAuth } from '../context/useAuth'
 import { isSystemAdmin } from '../authority'
 import {
   approveOfficer,
-  getActivePoliceStations,
   getOfficers,
   getSubordinateOfficers,
   rejectOfficer,
   updateOfficerAccountStatus,
-  updateOfficerStation,
 } from '../services/api'
 
 const requestMessage = (error, fallback) => error.response?.data?.message || (error.response ? fallback : 'Unable to reach the CRMS server. Please try again.')
@@ -43,8 +41,6 @@ function OfficerManagement() {
   const [approvalFilter, setApprovalFilter] = useState('all')
   const [accountFilter, setAccountFilter] = useState('all')
   const [loadingActionId, setLoadingActionId] = useState('')
-  const [stationOptions, setStationOptions] = useState([])
-  const [stationAssignments, setStationAssignments] = useState({})
 
   const buildParams = useMemo(() => {
     const params = {}
@@ -58,13 +54,8 @@ function OfficerManagement() {
     try {
       setLoading(true)
       setError('')
-      const [response, stationsResponse] = await Promise.all([
-        systemAdmin ? getOfficers(buildParams) : getSubordinateOfficers(buildParams),
-        systemAdmin ? getActivePoliceStations() : Promise.resolve({ data: { data: [] } }),
-      ])
+      const response = await (systemAdmin ? getOfficers(buildParams) : getSubordinateOfficers(buildParams))
       setOfficers(Array.isArray(response.data?.data) ? response.data.data : [])
-      setStationOptions(Array.isArray(stationsResponse.data?.data) ? stationsResponse.data.data : [])
-      setStationAssignments({})
     } catch (requestError) {
       setError(requestMessage(requestError, 'Could not load officers.'))
     } finally {
@@ -116,23 +107,6 @@ function OfficerManagement() {
       await loadOfficers()
     } catch (requestError) {
       setError(requestMessage(requestError, 'Unable to review the officer registration.'))
-    } finally {
-      setLoadingActionId('')
-    }
-  }
-
-  const handleStationAssignment = async (officer) => {
-    const stationId = stationAssignments[officer._id] || officer.stationId || ''
-    if (!stationId || stationId === String(officer.stationId || '')) return
-    try {
-      setLoadingActionId(officer._id)
-      setError('')
-      setNotice('')
-      await updateOfficerStation(officer._id, stationId)
-      setNotice('Officer police station updated successfully.')
-      await loadOfficers()
-    } catch (requestError) {
-      setError(requestMessage(requestError, 'Unable to update the officer station.'))
     } finally {
       setLoadingActionId('')
     }
@@ -233,7 +207,7 @@ function OfficerManagement() {
               <thead>
                 <tr>
                   {systemAdmin ? <th>Account</th> : <><th>Officer</th><th>Username</th><th>Batch No.</th></>}
-                  {systemAdmin && <th>Police station</th>}
+                  <th>Police station</th>
                   <th>Approval</th>
                   <th>Account Status</th>
                   <th>Actions</th>
@@ -244,19 +218,22 @@ function OfficerManagement() {
                   const approvalStatus = getApprovalStatus(officer)
                   const accountStatus = getAccountStatus(officer)
                   const isActionBusy = loadingActionId === officer._id
+                  const stationName = systemAdmin
+                    ? officer.stationName
+                    : officer.requestedStationId?.name || officer.stationId?.name || officer.station
 
                   return (
                     <tr key={officer._id}>
                       {systemAdmin ? <td><div className="fw-semibold">{officer.username || 'Account'}</div><small className="text-secondary">{officer.email || 'Email unavailable'}</small></td> : <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small></td><td>{officer.userId?.username || 'Not available'}</td><td><div>{officer.badgeNumber || '—'}</div><small className="text-secondary">ID: {officer.officerId || '—'}</small></td></>}
-                      {systemAdmin && <td><div className="d-flex gap-2"><select aria-label={`Police station for ${officer.username || 'officer'}`} className="form-select form-select-sm" disabled={!stationOptions.length || isActionBusy} onChange={(event) => setStationAssignments((current) => ({ ...current, [officer._id]: event.target.value }))} value={stationAssignments[officer._id] ?? String(officer.stationId || '')}><option value="">{officer.stationName ? `Legacy: ${officer.stationName}` : 'Select station'}</option>{stationOptions.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}</select><button className="btn btn-sm btn-outline-primary" disabled={isActionBusy || !stationAssignments[officer._id] || stationAssignments[officer._id] === String(officer.stationId || '')} onClick={() => handleStationAssignment(officer)} type="button">Assign</button></div></td>}
+                      <td><div>{stationName || 'No station selected'}</div>{systemAdmin && <small className="text-secondary">{officer.stationAssignmentStatus}</small>}{!systemAdmin && !officer.stationId && <small className="text-secondary">Unverified legacy station</small>}</td>
                       <td><span className={getBadgeClass(approvalStatus)}>{approvalStatus}</span></td>
                       <td><span className={getBadgeClass(accountStatus)}>{accountStatus}</span></td>
                       <td>
                         <div className="action-stack">
                           {!systemAdmin && <><button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/officers/${officer._id}`)} type="button">View</button><button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Update</button></>}
-                          <button className="btn btn-sm btn-outline-warning" disabled={isActionBusy} onClick={() => handleStatusToggle(officer)} type="button">
+                          {approvalStatus === 'approved' && <button className="btn btn-sm btn-outline-warning" disabled={isActionBusy} onClick={() => handleStatusToggle(officer)} type="button">
                             {isActionBusy ? 'Working...' : accountStatus === 'active' ? 'Deactivate' : 'Activate'}
-                          </button>
+                          </button>}
                           {approvalStatus === 'pending' && (
                             <>
                               <button className="btn btn-sm btn-success" disabled={isActionBusy} onClick={() => handleReview(officer, 'approve')} type="button">Approve</button>

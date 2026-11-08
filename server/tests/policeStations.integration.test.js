@@ -175,12 +175,11 @@ test("police station master validates names and uniqueness and exposes only acti
         .send({ name: "Invalid Code Station", code: "bad code" });
     assert.equal(invalidCode.status, 400);
 
-    const unauthenticatedList = await request(app).get("/api/police-stations/active");
-    assert.equal(unauthenticatedList.status, 401);
-    const activeList = await request(app).get("/api/police-stations/active").set(auth(officerToken));
+    const activeList = await request(app).get("/api/police-stations/active");
     assert.equal(activeList.status, 200);
     assert.equal(activeList.body.data.some((item) => item._id === String(inactiveStation._id)), false);
     assert.deepEqual(Object.keys(activeList.body.data[0]).sort(), ["_id", "name"]);
+    assert.ok(activeList.body.data.some((item) => item._id === String(station._id)));
 
     const created = await request(app)
         .post("/api/police-stations")
@@ -190,70 +189,170 @@ test("police station master validates names and uniqueness and exposes only acti
     assert.equal(created.body.data.code, "NORTH-02");
 });
 
-test("public officer registration records a request but cannot assign the trusted station", async () => {
-    const registered = await request(app).post("/api/auth/register").send(registrationPayload({
-        station: "West Police Station",
+test("officer registration requests an active canonical station and approval confirms it", async () => {
+    const missingStation = await request(app).post("/api/auth/register").send(registrationPayload({
         stationId: undefined,
+        station: "Central Police Station",
+    }));
+    assert.equal(missingStation.status, 400);
+    assert.equal(missingStation.body.error, "STATION_REQUIRED");
+
+    const invalidStationId = await request(app).post("/api/auth/register").send(registrationPayload({
+        username: "station-invalid-id",
+        email: "station-invalid-id@crms.test",
+        batchNumber: "STI001",
+        officerId: "PS-INVALID-ID",
+        stationId: "not-an-object-id",
+    }));
+    assert.equal(invalidStationId.status, 400);
+    assert.equal(invalidStationId.body.error, "INVALID_STATION_ID");
+
+    const missingStationRecord = await request(app).post("/api/auth/register").send(registrationPayload({
+        username: "station-missing-record",
+        email: "station-missing-record@crms.test",
+        batchNumber: "STM001",
+        officerId: "PS-MISSING-RECORD",
+        stationId: String(new mongoose.Types.ObjectId()),
+    }));
+    assert.equal(missingStationRecord.status, 404);
+
+    const inactiveRegistration = await request(app).post("/api/auth/register").send(registrationPayload({
+        username: "station-inactive-register",
+        email: "station-inactive-register@crms.test",
+        batchNumber: "STI002",
+        officerId: "PS-INACTIVE-REGISTER",
+        stationId: String(inactiveStation._id),
+    }));
+    assert.equal(inactiveRegistration.status, 400);
+    assert.equal(inactiveRegistration.body.error, "INACTIVE_POLICE_STATION");
+
+    const registered = await request(app).post("/api/auth/register").send(registrationPayload({
+        station: "Untrusted client station name",
     }));
     assert.equal(registered.status, 201);
-    assert.equal(registered.body.data.station, "West Police Station");
+    assert.equal(registered.body.data.station, station.name);
     assert.equal(registered.body.data.stationId, null);
+    assert.equal(String(registered.body.data.requestedStationId), String(station._id));
     const storedOfficer = await Officer.findById(registered.body.data.id);
+    const registeredUser = await User.findById(storedOfficer.userId);
     assert.equal(storedOfficer.stationId, undefined);
-    assert.equal(storedOfficer.station, "West Police Station");
+    assert.equal(String(storedOfficer.requestedStationId), String(station._id));
+    assert.equal(storedOfficer.station, station.name);
     assert.equal(storedOfficer.status, "inactive");
-    assert.equal((await User.findById(storedOfficer.userId)).status, "pending");
+    assert.equal(registeredUser.status, "pending");
+    assert.equal(registeredUser.isActive, false);
+    const adminOfficerList = await request(app)
+        .get("/api/officers?approvalStatus=pending")
+        .set(auth(adminToken));
+    const pendingOfficerRow = adminOfficerList.body.data.find((item) =>
+        item._id === String(storedOfficer._id));
+    assert.equal(pendingOfficerRow.stationName, station.name);
+    assert.equal(pendingOfficerRow.stationAssignmentStatus, "Requested");
 
-    const spoofedRegistration = await request(app).post("/api/auth/register").send(registrationPayload({
-        username: "station-spoof-register",
-        email: "station-spoof-register@crms.test",
-        batchNumber: "STS001",
-        officerId: "PS-SPOOF-001",
-        station: "Central Police Station",
-        stationId: String(station._id),
-    }));
-    assert.equal(spoofedRegistration.status, 403);
-    assert.equal(spoofedRegistration.body.error, "STATION_ASSIGNMENT_DENIED");
+    const unauthorizedApproval = await request(app)
+        .patch(`/api/officers/${storedOfficer._id}/approve`)
+        .set(auth(officerToken));
+    assert.equal(unauthorizedApproval.status, 403);
+    const unauthorizedStationEdit = await request(app)
+        .put(`/api/officers/${storedOfficer._id}`)
+        .set(auth(inspectorToken))
+        .send({ requestedStationId: String(otherStation._id) });
+    assert.equal(unauthorizedStationEdit.status, 403);
+    assert.equal(unauthorizedStationEdit.body.error, "STATION_ASSIGNMENT_DENIED");
 
-    const prematureApproval = await request(app)
+    await Officer.collection.updateOne(
+        { _id: storedOfficer._id },
+        { $unset: { requestedStationId: "" } },
+    );
+    const approvalWithoutRequest = await request(app)
         .patch(`/api/officers/${storedOfficer._id}/approve`)
         .set(auth(adminToken));
-    assert.equal(prematureApproval.status, 400);
-    assert.equal(prematureApproval.body.error, "STATION_ASSIGNMENT_REQUIRED");
+    assert.equal(approvalWithoutRequest.status, 400);
+    assert.equal(approvalWithoutRequest.body.error, "REQUESTED_STATION_REQUIRED");
+    assert.equal((await User.findById(registeredUser._id)).status, "pending");
+    assert.equal((await User.findById(registeredUser._id)).isActive, false);
+
+    await Officer.collection.updateOne(
+        { _id: storedOfficer._id },
+        { $set: { requestedStationId: new mongoose.Types.ObjectId() } },
+    );
+    const approvalWithMissingStation = await request(app)
+        .patch(`/api/officers/${storedOfficer._id}/approve`)
+        .set(auth(adminToken));
+    assert.equal(approvalWithMissingStation.status, 400);
+    assert.equal(approvalWithMissingStation.body.error, "REQUESTED_STATION_INVALID");
+
+    await Officer.collection.updateOne(
+        { _id: storedOfficer._id },
+        { $set: { requestedStationId: inactiveStation._id } },
+    );
+    const approvalWithInactiveStation = await request(app)
+        .patch(`/api/officers/${storedOfficer._id}/approve`)
+        .set(auth(adminToken));
+    assert.equal(approvalWithInactiveStation.status, 400);
+    assert.equal(approvalWithInactiveStation.body.error, "REQUESTED_STATION_INVALID");
+    assert.equal((await Officer.findById(storedOfficer._id)).stationId, undefined);
+    assert.equal((await User.findById(registeredUser._id)).status, "pending");
+
+    await Officer.collection.updateOne(
+        { _id: storedOfficer._id },
+        { $set: { requestedStationId: station._id } },
+    );
     const prematureActivation = await request(app)
         .patch(`/api/officers/${storedOfficer._id}/status`)
         .set(auth(adminToken))
         .send({ accountStatus: "active" });
-    assert.equal(prematureActivation.status, 400);
-    assert.equal(prematureActivation.body.error, "STATION_ASSIGNMENT_REQUIRED");
+    assert.equal(prematureActivation.status, 409);
+    assert.equal(prematureActivation.body.error, "OFFICER_NOT_APPROVED");
+
+    const removedManualAssignment = await request(app)
+        .patch(`/api/officers/${storedOfficer._id}/station`)
+        .set(auth(adminToken))
+        .send({ stationId: String(otherStation._id) });
+    assert.equal(removedManualAssignment.status, 404);
+
     const pendingLogin = await request(app).post("/api/auth/login").send({
         username: "station-register",
         password: "STR001",
     });
     assert.equal(pendingLogin.status, 403);
 
-    const assigned = await request(app)
-        .patch(`/api/officers/${storedOfficer._id}/station`)
-        .set(auth(adminToken))
-        .send({ stationId: String(station._id) });
-    assert.equal(assigned.status, 200);
-    const afterAssignment = await Officer.findById(storedOfficer._id);
-    assert.equal(afterAssignment.status, "inactive");
-    assert.equal(String(afterAssignment.stationId), String(station._id));
-
     const approved = await request(app)
         .patch(`/api/officers/${storedOfficer._id}/approve`)
         .set(auth(adminToken));
     assert.equal(approved.status, 200);
-    assert.equal((await Officer.findById(storedOfficer._id)).status, "active");
-    const login = await request(app).post("/api/auth/login").send({ username: "station-register", password: "STR001" });
+    assert.equal(String(approved.body.data.stationId), String(station._id));
+    assert.equal(approved.body.data.station, station.name);
+    const afterApproval = await Officer.findById(storedOfficer._id);
+    assert.equal(afterApproval.status, "active");
+    assert.equal(String(afterApproval.stationId), String(station._id));
+    assert.equal(afterApproval.requestedStationId, undefined);
+    assert.equal(afterApproval.station, station.name);
+    assert.equal((await User.findById(registeredUser._id)).status, "approved");
+    assert.equal((await User.findById(registeredUser._id)).isActive, true);
+    const login = await request(app).post("/api/auth/login").send({
+        username: "station-register",
+        password: "STR001",
+    });
     assert.equal(login.status, 200);
 
-    const unauthorizedAssign = await request(app)
-        .patch(`/api/officers/${storedOfficer._id}/station`)
-        .set(auth(officerToken))
-        .send({ stationId: String(otherStation._id) });
-    assert.equal(unauthorizedAssign.status, 403);
+    const rejectedRegistration = await request(app).post("/api/auth/register").send(registrationPayload({
+        username: "station-rejected",
+        email: "station-rejected@crms.test",
+        batchNumber: "STR002",
+        officerId: "PS-REJECTED",
+    }));
+    assert.equal(rejectedRegistration.status, 201);
+    const rejected = await request(app)
+        .patch(`/api/officers/${rejectedRegistration.body.data.id}/reject`)
+        .set(auth(adminToken));
+    assert.equal(rejected.status, 200);
+    const rejectedOfficer = await Officer.findById(rejectedRegistration.body.data.id);
+    assert.equal(rejectedOfficer.stationId, undefined);
+    assert.equal(String(rejectedOfficer.requestedStationId), String(station._id));
+    const rejectedUser = await User.findById(rejectedOfficer.userId);
+    assert.equal(rejectedUser.status, "rejected");
+    assert.equal(rejectedUser.isActive, false);
 });
 
 test("officer activation requires an existing active station assigned by an administrator", async () => {
@@ -309,10 +408,11 @@ test("officer activation requires an existing active station assigned by an admi
     assert.equal(activationWithInactiveStation.body.error, "STATION_ASSIGNMENT_INVALID");
 
     const unauthorizedAssignment = await request(app)
-        .patch(`/api/officers/${legacyOfficer._id}/station`)
+        .put(`/api/officers/${legacyOfficer._id}`)
         .set(auth(officerToken))
-        .send({ stationId: String(station._id) });
+        .send({ requestedStationId: String(station._id) });
     assert.equal(unauthorizedAssignment.status, 403);
+    assert.equal(unauthorizedAssignment.body.error, "STATION_ASSIGNMENT_DENIED");
 
     await Officer.collection.updateOne(
         { _id: legacyOfficer._id },
@@ -328,11 +428,10 @@ test("officer activation requires an existing active station assigned by an admi
         .send({ accountStatus: "active" });
     assert.equal(activationWithStation.status, 400);
 
-    const assigned = await request(app)
-        .patch(`/api/officers/${legacyOfficer._id}/station`)
-        .set(auth(adminToken))
-        .send({ stationId: String(station._id) });
-    assert.equal(assigned.status, 200);
+    await Officer.collection.updateOne(
+        { _id: legacyOfficer._id },
+        { $set: { stationId: station._id, station: station.name } },
+    );
     const activated = await request(app)
         .patch(`/api/officers/${legacyOfficer._id}/status`)
         .set(auth(adminToken))
@@ -343,29 +442,21 @@ test("officer activation requires an existing active station assigned by an admi
 });
 
 test("FIR creation and edits require the officer's approved station without weakening record authorization", async () => {
-    const assigned = await request(app)
-        .patch(`/api/officers/${officers.a._id}/station`)
-        .set(auth(adminToken))
-        .send({ stationId: String(station._id) });
-    assert.equal(assigned.status, 200);
-
-    const unauthorized = await request(app)
-        .patch(`/api/officers/${officers.a._id}/station`)
-        .set(auth(officerToken))
-        .send({ stationId: String(inactiveStation._id) });
-    assert.equal(unauthorized.status, 403);
-
     const managerCannotReassign = await request(app)
         .put(`/api/officers/${officers.a._id}`)
         .set(auth(inspectorToken))
-        .send({ station: "Forged station", stationId: String(inactiveStation._id) });
+        .send({
+            station: "Forged station",
+            stationId: String(inactiveStation._id),
+            requestedStationId: String(inactiveStation._id),
+        });
     assert.equal(managerCannotReassign.status, 403);
-
-    const badAssignment = await request(app)
+    assert.equal(managerCannotReassign.body.error, "STATION_ASSIGNMENT_DENIED");
+    const removedManualAssignment = await request(app)
         .patch(`/api/officers/${officers.a._id}/station`)
         .set(auth(adminToken))
         .send({ stationId: String(inactiveStation._id) });
-    assert.equal(badAssignment.status, 400);
+    assert.equal(removedManualAssignment.status, 404);
     assert.equal(String((await Officer.findById(officers.a._id)).stationId), String(station._id));
 
     const linkedFir = await request(app)

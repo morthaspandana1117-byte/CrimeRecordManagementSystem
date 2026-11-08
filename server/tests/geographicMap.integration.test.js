@@ -13,6 +13,7 @@ const Officer = require("../models/Officer");
 const Criminal = require("../models/Criminal");
 const FIR = require("../models/FIR");
 const Case = require("../models/Case");
+const Evidence = require("../models/Evidence");
 const PoliceStation = require("../models/PoliceStation");
 
 let mongoServer;
@@ -21,10 +22,11 @@ let officers;
 let tokens;
 let criminal;
 let station;
+let westStation;
 const password = "GeoMap@123";
 const auth = (officer) => ({ Authorization: `Bearer ${tokens[officer]}` });
 
-const createOfficer = async (username, rank, badgeNumber) => {
+const createOfficer = async (username, rank, badgeNumber, stationRecord = station) => {
     const user = await User.create({
         username,
         email: `${username}@crms.test`,
@@ -40,8 +42,8 @@ const createOfficer = async (username, rank, badgeNumber) => {
         name: username,
         rank,
         department: "Criminal Investigation",
-        station: "Geo Test Station",
-        stationId: station._id,
+        station: stationRecord.name,
+        stationId: stationRecord._id,
         phoneNumber: "5550101000",
         address: "Synthetic test address",
         joiningDate: "2020-01-01",
@@ -52,11 +54,11 @@ const createOfficer = async (username, rank, badgeNumber) => {
     return { officer, token: login.body.token };
 };
 
-const firPayload = (firNo, overrides = {}) => ({
+const firPayload = (firNo, overrides = {}, stationRecord = station) => ({
     firNo,
     date: "2026-10-12",
-    policeStation: "Geo Test Station",
-    policeStationId: String(station._id),
+    policeStation: stationRecord.name,
+    policeStationId: String(stationRecord._id),
     complaint: { complainantName: "Synthetic complainant", complaintText: "Synthetic map test record" },
     description: "Synthetic geographic map test",
     crimeType: "Theft",
@@ -83,18 +85,29 @@ test.before(async () => {
     await mongoose.connect(mongoServer.getUri("crms-geographic-map"));
     app = createApp();
     station = await PoliceStation.create({ name: "Geo Test Station", code: "GEO-01" });
-    officers = {};
-    tokens = {};
-
-    const first = await createOfficer("geo-officer-a", "investigating_officer", "GEO001");
-    const second = await createOfficer("geo-officer-b", "investigating_officer", "GEO002");
-    const senior = await createOfficer("geo-inspector", "inspector", "GEO003");
-    officers.a = first.officer;
-    officers.b = second.officer;
-    officers.inspector = senior.officer;
-    tokens.a = first.token;
-    tokens.b = second.token;
-    tokens.inspector = senior.token;
+    westStation = await PoliceStation.create({ name: "West Geo Station", code: "GEO-02" });
+    const centralConstable = await createOfficer("geo-central-constable", "constable", "GEO001");
+    const centralHeadConstable = await createOfficer("geo-central-head", "head_constable", "GEO002");
+    const centralSI = await createOfficer("geo-central-si", "si", "GEO003");
+    const centralInspector = await createOfficer("geo-central-inspector", "inspector", "GEO004");
+    const westSI = await createOfficer("geo-west-si", "si", "GEO005", westStation);
+    const westInspector = await createOfficer("geo-west-inspector", "inspector", "GEO006", westStation);
+    officers = {
+        a: centralConstable.officer,
+        b: centralHeadConstable.officer,
+        si: centralSI.officer,
+        inspector: centralInspector.officer,
+        westSI: westSI.officer,
+        westInspector: westInspector.officer,
+    };
+    tokens = {
+        a: centralConstable.token,
+        b: centralHeadConstable.token,
+        si: centralSI.token,
+        inspector: centralInspector.token,
+        westSI: westSI.token,
+        westInspector: westInspector.token,
+    };
     const adminUser = await User.create({
         username: "geo-system-admin",
         email: "geo-system-admin@crms.test",
@@ -145,6 +158,25 @@ test.before(async () => {
         .set(auth("b"))
         .send(firPayload("GEO-FIR-FOREIGN", { latitude: 40.7, longitude: -74.0 }));
     assert.equal(foreign.status, 201);
+
+    const westFIR = await request(app)
+        .post("/api/firs")
+        .set(auth("westSI"))
+        .send(firPayload("GEO-FIR-WEST", { latitude: 34.05, longitude: -118.25 }, westStation));
+    assert.equal(westFIR.status, 201);
+
+    const mappedCase = await Case.findOne({ firId: mapped.body.data._id });
+    await Evidence.create({
+        evidenceId: "GEO-EVIDENCE-001",
+        caseId: mappedCase._id,
+        investigationRound: 1,
+        type: "Physical",
+        description: "Synthetic evidence for marker privacy test",
+        collectedBy: officers.a._id,
+        collectionDate: "2026-10-12",
+        location: "Synthetic evidence location",
+        status: "Collected",
+    });
 });
 
 test.after(async () => {
@@ -191,7 +223,7 @@ test("FIR coordinates are optional, paired, and validated on create and update",
     assert.equal(clearCoordinates.body.data.longitude, null);
 });
 
-test("map API returns only valid coordinates, safe marker details, and authorized records", async () => {
+test("map API shares station markers across ranks without granting FIR, case, or evidence access", async () => {
     const unauthenticated = await request(app).get("/api/firs/map");
     assert.equal(unauthenticated.status, 401);
     const systemAdmin = await request(app).get("/api/firs/map").set(auth("admin"));
@@ -200,20 +232,24 @@ test("map API returns only valid coordinates, safe marker details, and authorize
     const ownRecords = await request(app).get("/api/firs/map").set(auth("a"));
     assert.equal(ownRecords.status, 200);
     assert.equal(ownRecords.body.data.totalRecords, 4);
-    assert.equal(ownRecords.body.data.mappedRecords, 1);
-    assert.equal(ownRecords.body.data.unmappedRecords, 3);
+    assert.equal(ownRecords.body.data.mappedRecords, 2);
+    assert.equal(ownRecords.body.data.unmappedRecords, 2);
     assert.equal(
         ownRecords.body.data.mappedRecords + ownRecords.body.data.unmappedRecords,
         ownRecords.body.data.totalRecords,
     );
-    assert.deepEqual(ownRecords.body.data.records.map((record) => record.firNo), ["GEO-FIR-MAPPED"]);
+    assert.deepEqual(
+        ownRecords.body.data.records.map((record) => record.firNo).sort(),
+        ["GEO-FIR-FOREIGN", "GEO-FIR-MAPPED"],
+    );
     assert.deepEqual(Object.keys(ownRecords.body.data.records[0]).sort(), [
         "_id", "caseNo", "caseStatus", "crimeType", "date", "firNo", "latitude",
         "location", "longitude", "policeStation", "status",
     ].sort());
     assert.equal(ownRecords.body.data.records[0].complaint, undefined);
-    assert.equal(ownRecords.body.data.records[0].location.address, undefined);
-    assert.equal(ownRecords.body.data.records[0].caseNo, "GEO-CASE-CLOSED");
+    assert.equal(ownRecords.body.data.records.every((record) => record.location.address === undefined), true);
+    const mappedMarker = ownRecords.body.data.records.find((record) => record.firNo === "GEO-FIR-MAPPED");
+    assert.equal(mappedMarker.caseNo, "GEO-CASE-CLOSED");
 
     for (const query of [
         "crimeType=Theft",
@@ -224,7 +260,7 @@ test("map API returns only valid coordinates, safe marker details, and authorize
         const filtered = await request(app).get(`/api/firs/map?${query}`).set(auth("a"));
         assert.equal(filtered.status, 200, query);
         assert.equal(filtered.body.data.totalRecords, 4, query);
-        assert.equal(filtered.body.data.mappedRecords, 1, query);
+        assert.equal(filtered.body.data.mappedRecords, 2, query);
     }
 
     const caseFilter = await request(app)
@@ -235,21 +271,62 @@ test("map API returns only valid coordinates, safe marker details, and authorize
     assert.equal(caseFilter.body.data.mappedRecords, 1);
     assert.equal(caseFilter.body.data.records[0].firNo, "GEO-FIR-MAPPED");
 
-    const otherOfficer = await request(app).get("/api/firs/map").set(auth("b"));
-    assert.equal(otherOfficer.status, 200);
-    assert.deepEqual(otherOfficer.body.data.records.map((record) => record.firNo), ["GEO-FIR-FOREIGN"]);
-    assert.equal(otherOfficer.body.data.unmappedRecords, 0);
+    const centralMarkers = ownRecords.body.data.records.map((record) => record.firNo).sort();
+    for (const rank of ["b", "si", "inspector"]) {
+        const sameStation = await request(app).get("/api/firs/map").set(auth(rank));
+        assert.equal(sameStation.status, 200, rank);
+        assert.deepEqual(sameStation.body.data.records.map((record) => record.firNo).sort(), centralMarkers, rank);
+    }
 
-    const seniorOfficer = await request(app).get("/api/firs/map").set(auth("inspector"));
-    assert.equal(seniorOfficer.status, 200);
-    assert.equal(seniorOfficer.body.data.totalRecords, 5);
-    assert.equal(seniorOfficer.body.data.mappedRecords, 2);
+    for (const rank of ["westSI", "westInspector"]) {
+        const westMap = await request(app).get("/api/firs/map").set(auth(rank));
+        assert.equal(westMap.status, 200, rank);
+        assert.deepEqual(westMap.body.data.records.map((record) => record.firNo), ["GEO-FIR-WEST"], rank);
+    }
+
+    const forgedStationFilter = await request(app)
+        .get(`/api/firs/map?stationId=${westStation._id}`)
+        .set(auth("a"));
+    assert.equal(forgedStationFilter.status, 400);
+    assert.equal(forgedStationFilter.body.error, "INVALID_MAP_FILTER");
+
+    const markerDoesNotGrantFIRAccess = await request(app)
+        .get(`/api/firs/${mappedMarker._id}`)
+        .set(auth("b"));
+    assert.equal(markerDoesNotGrantFIRAccess.status, 403);
+    const mappedCase = await Case.findOne({ firId: mappedMarker._id });
+    const markerDoesNotGrantCaseAccess = await request(app)
+        .get(`/api/cases/${mappedCase._id}`)
+        .set(auth("b"));
+    assert.equal(markerDoesNotGrantCaseAccess.status, 403);
+    const mappedEvidence = await Evidence.findOne({ caseId: mappedCase._id });
+    const markerDoesNotGrantEvidenceAccess = await request(app)
+        .get(`/api/evidence/${mappedEvidence._id}`)
+        .set(auth("b"));
+    assert.equal(markerDoesNotGrantEvidenceAccess.status, 403);
+
+    await User.updateOne({ _id: officers.a.userId }, { $set: { status: "pending" } });
+    const unapprovedOfficer = await request(app).get("/api/firs/map").set(auth("a"));
+    assert.equal(unapprovedOfficer.status, 403);
+    await User.updateOne({ _id: officers.a.userId }, { $set: { status: "approved" } });
+
+    await Officer.updateOne({ _id: officers.a._id }, { $set: { status: "inactive" } });
+    const inactiveOfficer = await request(app).get("/api/firs/map").set(auth("a"));
+    assert.equal(inactiveOfficer.status, 403);
+    await Officer.updateOne({ _id: officers.a._id }, { $set: { status: "active" } });
+
+    await PoliceStation.updateOne({ _id: station._id }, { $set: { isActive: false } });
+    const inactiveStationMap = await request(app).get("/api/firs/map").set(auth("a"));
+    assert.equal(inactiveStationMap.status, 403);
+    assert.equal(inactiveStationMap.body.error, "STATION_ASSIGNMENT_INVALID");
+    await PoliceStation.updateOne({ _id: station._id }, { $set: { isActive: true } });
 });
 
 test("map endpoint rejects unsupported filters and invalid dates", async () => {
     for (const query of [
         "caseStatus=Unknown",
         "crimeType=Unknown",
+        `stationId=${westStation._id}`,
         "fromDate=2026-02-30",
         "fromDate=2026-10-13&toDate=2026-10-12",
         "latitude[$gt]=0",
@@ -266,11 +343,12 @@ test("map endpoint rejects unsupported filters and invalid dates", async () => {
     assert.deepEqual(empty.body.data.records, []);
 });
 
-test("map counts reconcile with source records and exclude partial or invalid legacy coordinates", async () => {
+test("map counts reconcile while excluding legacy FIRs without a canonical station reference", async () => {
     const makeLegacyFIR = (firNo, coordinates = {}) => ({
         firNo,
         date: new Date("2026-11-02T00:00:00.000Z"),
         policeStation: "Geo Test Station",
+        policeStationId: station._id,
         complaint: {
             complainantName: "Sensitive legacy complainant",
             complainantPhone: "5551234567",
@@ -293,9 +371,13 @@ test("map counts reconcile with source records and exclude partial or invalid le
         makeLegacyFIR("GEO-LEGACY-OUT-OF-RANGE", { latitude: 90.01, longitude: 0 }),
         makeLegacyFIR("GEO-LEGACY-MISSING"),
     ]);
+    await FIR.collection.insertOne({
+        ...makeLegacyFIR("GEO-LEGACY-UNVERIFIED", { latitude: 12, longitude: 14 }),
+        policeStationId: undefined,
+    });
 
     const sourceRecords = await FIR.find({
-        registeredBy: officers.a._id,
+        policeStationId: station._id,
         crimeType: "Other",
     }).lean();
     const response = await request(app)

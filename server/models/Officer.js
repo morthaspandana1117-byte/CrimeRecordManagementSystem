@@ -77,6 +77,11 @@ const officerSchema = new mongoose.Schema(
             },
         },
 
+        requestedStationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "PoliceStation",
+        },
+
         phoneNumber: {
             type: String,
             required: true,

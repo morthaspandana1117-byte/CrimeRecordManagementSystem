@@ -290,7 +290,9 @@ const login = async (req, res) => {
             });
         }
 
-        if (!user.isActive) {
+        const nonApprovedOfficerAccount = user.role === "officer" &&
+            ["pending", "rejected"].includes(user.status || "approved");
+        if (!user.isActive && !nonApprovedOfficerAccount) {
             await recordAuthEvent({ actor: user._id, action: "LOGIN_FAILED", entityType: "Authentication", entityId: user._id, method: req.method, path: authRoutePath(req) });
             return res.status(403).json({
                 success: false,

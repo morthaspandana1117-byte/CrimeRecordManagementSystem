@@ -9,7 +9,6 @@ const {
     rejectOfficer,
     getAssignableOfficers,
     updateOfficerAccountStatus,
-    updateOfficerStation,
 } = require("../controllers/officerController");
 
 const { authMiddleware } = require("../middleware/authMiddleware");
@@ -31,7 +30,6 @@ router.get("/", requireAuthority({ systemRoles: ["system_admin"] }), getAllOffic
 router.get("/subordinates", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS }), getAllOfficers);
 router.get("/:id", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS, systemRoles: ["system_admin"] }), getOfficerById);
 router.put("/:id", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS }), updateOfficer);
-router.patch("/:id/station", requireAuthority({ systemRoles: ["system_admin"] }), updateOfficerStation);
 router.patch("/:id/approve", requireAuthority({ systemRoles: ["system_admin"] }), approveOfficer);
 router.patch("/:id/reject", requireAuthority({ systemRoles: ["system_admin"] }), rejectOfficer);
 router.patch("/:id/status", requireAuthority({ managementRanks: OFFICER_MANAGEMENT_RANKS, systemRoles: ["system_admin"] }), updateOfficerAccountStatus);
