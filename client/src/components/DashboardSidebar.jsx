@@ -14,6 +14,7 @@ const officerItems = [
 ]
 
 const adminItems = [
+  { to: '/admin/police-stations', label: 'Police Stations', icon: 'PS' },
   { to: '/admin/dashboard', label: 'Dashboard', icon: '▦', end: true },
   { to: '/officers', label: 'Officer Management', icon: '♙' },
   { to: '/admin/audit-logs', label: 'Audit Logs', icon: '▤' },

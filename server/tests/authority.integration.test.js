@@ -279,7 +279,6 @@ test("Officer Management permissions follow system role, not officer rank", asyn
         "accountStatus",
         "approvalStatus",
         "email",
-        "requestedStationId",
         "stationAssignmentStatus",
         "stationId",
         "stationName",

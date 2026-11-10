@@ -4,6 +4,8 @@ import { useAuth } from '../context/useAuth'
 import { isSystemAdmin } from '../authority'
 import {
   approveOfficer,
+  assignOfficerStation,
+  getActivePoliceStations,
   getOfficers,
   getSubordinateOfficers,
   rejectOfficer,
@@ -41,6 +43,30 @@ function OfficerManagement() {
   const [approvalFilter, setApprovalFilter] = useState('all')
   const [accountFilter, setAccountFilter] = useState('all')
   const [loadingActionId, setLoadingActionId] = useState('')
+  const [stations, setStations] = useState([])
+  const [stationChoices, setStationChoices] = useState({})
+
+  useEffect(() => {
+    if (!systemAdmin) return
+    getActivePoliceStations().then((response) => setStations(Array.isArray(response.data?.data) ? response.data.data : []))
+      .catch((requestError) => setError(requestMessage(requestError, 'Could not load active police stations.')))
+  }, [systemAdmin])
+
+  const handleStationAssignment = async (officer) => {
+    const stationId = stationChoices[officer._id] || officer.stationId
+    if (!stationId) return setError('Select an active police station before saving the assignment.')
+    try {
+      setLoadingActionId(officer._id)
+      setError('')
+      const response = await assignOfficerStation(officer._id, stationId)
+      setNotice(response.data?.message || 'Police station assignment updated.')
+      await loadOfficers()
+    } catch (requestError) {
+      setError(requestMessage(requestError, 'Unable to update the police station assignment.'))
+    } finally {
+      setLoadingActionId('')
+    }
+  }
 
   const buildParams = useMemo(() => {
     const params = {}
@@ -220,12 +246,12 @@ function OfficerManagement() {
                   const isActionBusy = loadingActionId === officer._id
                   const stationName = systemAdmin
                     ? officer.stationName
-                    : officer.requestedStationId?.name || officer.stationId?.name || officer.station
+                    : officer.stationId?.name || officer.station
 
                   return (
                     <tr key={officer._id}>
                       {systemAdmin ? <td><div className="fw-semibold">{officer.username || 'Account'}</div><small className="text-secondary">{officer.email || 'Email unavailable'}</small></td> : <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small></td><td>{officer.userId?.username || 'Not available'}</td><td><div>{officer.badgeNumber || '—'}</div><small className="text-secondary">ID: {officer.officerId || '—'}</small></td></>}
-                      <td><div>{stationName || 'No station selected'}</div>{systemAdmin && <small className="text-secondary">{officer.stationAssignmentStatus}</small>}{!systemAdmin && !officer.stationId && <small className="text-secondary">Unverified legacy station</small>}</td>
+                      <td><div>{stationName || 'No station selected'}</div>{systemAdmin && <small className="text-secondary d-block">{officer.stationAssignmentStatus}</small>}{!systemAdmin && !officer.stationId && <small className="text-secondary">Unverified legacy station</small>}{systemAdmin && officer.stationAssignmentStatus !== 'Assigned' && <div className="d-flex gap-1 mt-1"><select aria-label={`Correct station for ${officer.username || 'officer'}`} className="form-select form-select-sm" onChange={(event) => setStationChoices((current) => ({ ...current, [officer._id]: event.target.value }))} value={stationChoices[officer._id] || ''}><option value="">Select active station</option>{stations.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}</select><button className="btn btn-sm btn-outline-primary" disabled={isActionBusy || !stationChoices[officer._id]} onClick={() => handleStationAssignment(officer)} type="button">Correct</button></div>}</td>
                       <td><span className={getBadgeClass(approvalStatus)}>{approvalStatus}</span></td>
                       <td><span className={getBadgeClass(accountStatus)}>{accountStatus}</span></td>
                       <td>

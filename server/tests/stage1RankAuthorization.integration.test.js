@@ -126,8 +126,7 @@ test("registration accepts all seven canonical ranks, rejects legacy labels, and
         assert.equal(pendingLogin.status, 403);
         assert.equal(pendingLogin.body.error, "ACCOUNT_PENDING_APPROVAL");
         const officer = await Officer.findOne({ officerId: `REG-${rank}` });
-        assert.equal(String(officer.requestedStationId), String(station._id), rank);
-        assert.equal(officer.stationId, undefined, rank);
+        assert.equal(String(officer.stationId), String(station._id), rank);
         const approval = await request(app)
             .patch(`/api/officers/${officer._id}/approve`)
             .set("Authorization", `Bearer ${adminToken}`);

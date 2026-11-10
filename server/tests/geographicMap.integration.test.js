@@ -309,6 +309,10 @@ test("map API shares station markers across ranks without granting FIR, case, or
     const unapprovedOfficer = await request(app).get("/api/firs/map").set(auth("a"));
     assert.equal(unapprovedOfficer.status, 403);
     await User.updateOne({ _id: officers.a.userId }, { $set: { status: "approved" } });
+    await User.updateOne({ _id: officers.a.userId }, { $set: { status: "rejected", isActive: false } });
+    const rejectedOfficer = await request(app).get("/api/firs/map").set(auth("a"));
+    assert.equal(rejectedOfficer.status, 403);
+    await User.updateOne({ _id: officers.a.userId }, { $set: { status: "approved", isActive: true } });
 
     await Officer.updateOne({ _id: officers.a._id }, { $set: { status: "inactive" } });
     const inactiveOfficer = await request(app).get("/api/firs/map").set(auth("a"));
@@ -320,6 +324,48 @@ test("map API shares station markers across ranks without granting FIR, case, or
     assert.equal(inactiveStationMap.status, 403);
     assert.equal(inactiveStationMap.body.error, "STATION_ASSIGNMENT_INVALID");
     await PoliceStation.updateOne({ _id: station._id }, { $set: { isActive: true } });
+});
+
+test("legacy station correction restores same-station markers without granting FIR detail access", async () => {
+    const legacy = await createOfficer("geo-legacy-asi", "asi", "GEO007");
+    await Officer.collection.updateOne(
+        { _id: legacy.officer._id },
+        { $set: { rank: "ASI" }, $unset: { stationId: "" } },
+    );
+
+    const unassignedMap = await request(app)
+        .get("/api/firs/map")
+        .set("Authorization", `Bearer ${legacy.token}`);
+    assert.equal(unassignedMap.status, 403);
+    assert.equal(unassignedMap.body.error, "STATION_ASSIGNMENT_REQUIRED");
+
+    const correction = await request(app)
+        .patch(`/api/officers/${legacy.officer._id}/station`)
+        .set(auth("admin"))
+        .send({ stationId: String(station._id) });
+    assert.equal(correction.status, 200);
+    const corrected = await Officer.findById(legacy.officer._id).lean();
+    assert.equal(String(corrected.stationId), String(station._id));
+    assert.equal(corrected.station, station.name);
+    assert.equal(corrected.rank, "ASI");
+
+    const legacyMap = await request(app)
+        .get("/api/firs/map")
+        .set("Authorization", `Bearer ${legacy.token}`);
+    const centralMap = await request(app).get("/api/firs/map").set(auth("a"));
+    assert.equal(legacyMap.status, 200);
+    assert.deepEqual(
+        legacyMap.body.data.records.map((record) => record.firNo).sort(),
+        centralMap.body.data.records.map((record) => record.firNo).sort(),
+    );
+    assert.ok(legacyMap.body.data.records.some((record) => record.firNo === "GEO-FIR-MAPPED"));
+
+    const marker = legacyMap.body.data.records.find((record) => record.firNo === "GEO-FIR-MAPPED");
+    const protectedDetails = await request(app)
+        .get(`/api/firs/${marker._id}`)
+        .set("Authorization", `Bearer ${legacy.token}`);
+    assert.equal(protectedDetails.status, 403);
+    assert.equal(protectedDetails.body.error, "FIR_ACCESS_DENIED");
 });
 
 test("map endpoint rejects unsupported filters and invalid dates", async () => {

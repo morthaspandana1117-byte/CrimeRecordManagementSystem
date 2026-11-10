@@ -275,7 +275,7 @@ const registerOfficer = async (req, res) => {
             rank: rank.trim().toLowerCase(),
             department,
             station: station.name,
-            requestedStationId: station._id,
+            stationId: station._id,
             phoneNumber: phoneNumber.trim(),
             address: address.trim(),
             joiningDate,
@@ -307,9 +307,7 @@ const registerOfficer = async (req, res) => {
                 rank: officer.rank,
                 department: officer.department,
                 station: officer.station,
-                requestedStationId: officer.requestedStationId,
-                stationId: null,
-                requestedStation: officer.station,
+                stationId: officer.stationId,
                 status: "pending",
             },
         });
@@ -341,10 +339,9 @@ const getAllOfficers = async (req, res) => {
 
         if (req.authority?.systemRole === "system_admin") {
             const accounts = await Officer.find()
-                .select("userId status station stationId requestedStationId")
+                .select("userId status station stationId")
                 .populate("userId", "username email role isActive status")
-                .populate("stationId", "name")
-                .populate("requestedStationId", "name");
+                .populate("stationId", "name isActive");
 
             const filteredAccounts = accounts.filter((officer) => {
                 const user = officer.userId;
@@ -365,14 +362,10 @@ const getAllOfficers = async (req, res) => {
                     approvalStatus: user.status || "approved",
                     accountStatus: user.isActive && officer.status === "active" ? "active" : "inactive",
                     stationId: officer.stationId?._id || null,
-                    requestedStationId: officer.requestedStationId?._id || null,
-                    stationName: officer.requestedStationId?.name || officer.stationId?.name || officer.station,
-                    stationAssignmentStatus: user.status === "pending" &&
-                        (officer.requestedStationId || officer.stationId)
-                        ? "Requested"
-                        : officer.stationId
-                            ? "Assigned"
-                            : "Unverified legacy station",
+                    stationName: officer.stationId?.name || officer.station || null,
+                    stationAssignmentStatus: officer.stationId
+                        ? officer.stationId.isActive ? "Assigned" : "Inactive station assignment"
+                        : "Unverified legacy station",
                 };
             });
 
@@ -500,12 +493,11 @@ const updateOfficer = async (req, res) => {
 
         if (
             Object.hasOwn(req.body || {}, "station") ||
-            Object.hasOwn(req.body || {}, "stationId") ||
-            Object.hasOwn(req.body || {}, "requestedStationId")
+            Object.hasOwn(req.body || {}, "stationId")
         ) {
             return res.status(403).json({
                 success: false,
-                message: "Police station requests and assignments cannot be changed through profile updates",
+                message: "Police station assignments cannot be changed through profile updates",
                 error: "STATION_ASSIGNMENT_DENIED",
             });
         }
@@ -622,6 +614,24 @@ const updateOfficer = async (req, res) => {
     }
 };
 
+const assignOfficerStation = async (req, res) => {
+    if (!isValidObjectId(req.params.id)) return invalid(res, "Invalid officer ID", "INVALID_OFFICER_ID");
+    if (!isValidObjectId(req.body?.stationId)) return invalid(res, "stationId must be a valid police station ID", "INVALID_STATION_ID");
+    try {
+        const station = await resolveActivePoliceStation(res, req.body.stationId, "stationId");
+        if (!station) return;
+        const officer = await Officer.findOneAndUpdate(
+            { _id: req.params.id },
+            { $set: { stationId: station._id, station: station.name } },
+            { new: true, runValidators: true },
+        ).select("_id stationId station");
+        if (!officer) return notFound(res, "Officer");
+        return res.status(200).json({ success: true, message: "Police station assignment updated", data: { id: officer._id, stationId: officer.stationId, station: officer.station } });
+    } catch (error) {
+        return handleError(res, error, "Assign officer station error");
+    }
+};
+
 const setOfficerApprovalStatus = (status, message) => async (req, res) => {
     const session = await mongoose.startSession();
     try {
@@ -643,51 +653,30 @@ const setOfficerApprovalStatus = (status, message) => async (req, res) => {
                 throw Object.assign(new Error("Only pending officer registrations can be reviewed"), { code: "OFFICER_NOT_PENDING" });
             }
 
-            let assignedStation = null;
             if (status === "approved") {
-                const requestedStationId = officer.requestedStationId || officer.stationId;
-                if (!requestedStationId) {
-                    throw Object.assign(
-                        new Error("This registration has no requested police station. Reject it or have it corrected through an authorized process."),
-                        { code: "REQUESTED_STATION_REQUIRED" },
-                    );
-                }
-                if (!isValidObjectId(requestedStationId)) {
-                    throw Object.assign(
-                        new Error("The requested police station is invalid. Reject this registration or have it corrected through an authorized process."),
-                        { code: "REQUESTED_STATION_INVALID" },
-                    );
-                }
-                assignedStation = await PoliceStation.findOne({
-                    _id: requestedStationId,
+                const assignedStation = await PoliceStation.findOne({
+                    _id: officer.stationId,
                     isActive: true,
                 }).select("_id name").session(session);
                 if (!assignedStation) {
                     throw Object.assign(
-                        new Error("The requested police station no longer exists or is inactive. Reject this registration or have it corrected through an authorized process."),
-                        { code: "REQUESTED_STATION_INVALID" },
+                        new Error("The assigned police station is missing or inactive. Correct the station assignment before approval."),
+                        { code: "STATION_ASSIGNMENT_INVALID" },
                     );
                 }
-
-                officer.stationId = assignedStation._id;
-                officer.station = assignedStation.name;
-                officer.requestedStationId = undefined;
                 officer.status = "active";
+                officer.station = assignedStation.name;
+                officer.stationId = assignedStation._id;
                 await officer.save({ session });
                 user.isActive = true;
+                result = { id: officer._id, status: status, stationId: assignedStation._id, station: assignedStation.name };
             } else {
                 user.isActive = false;
+                result = { id: officer._id, status };
             }
 
             user.status = status;
             await user.save({ session });
-            result = {
-                id: officer._id,
-                status: user.status,
-                ...(assignedStation
-                    ? { stationId: assignedStation._id, station: assignedStation.name }
-                    : {}),
-            };
         });
 
         return res.status(200).json({
@@ -706,7 +695,7 @@ const setOfficerApprovalStatus = (status, message) => async (req, res) => {
         if (error.code === "OFFICER_NOT_PENDING") {
             return res.status(409).json({ success: false, message: error.message, error: error.code });
         }
-        if (error.code === "REQUESTED_STATION_REQUIRED" || error.code === "REQUESTED_STATION_INVALID") {
+        if (error.code === "STATION_ASSIGNMENT_INVALID") {
             return res.status(400).json({ success: false, message: error.message, error: error.code });
         }
         return handleError(res, error, "Update officer approval status error");
@@ -1112,6 +1101,7 @@ module.exports = {
     getAllOfficers,
     getOfficerById,
     updateOfficer,
+    assignOfficerStation,
     deleteOfficer,
     approveOfficer,
     rejectOfficer,

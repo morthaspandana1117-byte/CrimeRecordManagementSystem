@@ -208,8 +208,7 @@ test("registered officers stay locked out until an admin approves them, then gai
     const officer = await Officer.findOne({ userId: user._id });
     assert.equal(String(officer._id), String(registered.body.data.id));
     assert.equal(officer.rank, "si");
-    assert.equal(String(officer.requestedStationId), String(station._id));
-    assert.equal(officer.stationId, undefined);
+    assert.equal(String(officer.stationId), String(station._id));
     assert.equal(officer.station, station.name);
     assert.equal(user.isActive, false);
 
@@ -247,7 +246,7 @@ test("registered officers stay locked out until an admin approves them, then gai
     assert.equal((await User.findById(user._id)).isActive, true);
     const assignedOfficer = await Officer.findById(officer._id);
     assert.equal(String(assignedOfficer.stationId), String(station._id));
-    assert.equal(assignedOfficer.requestedStationId, undefined);
+    assert.equal(assignedOfficer.station, station.name);
     assert.equal(assignedOfficer.station, station.name);
 
     const approveAgain = await request(app)
