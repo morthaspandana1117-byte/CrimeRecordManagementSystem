@@ -659,6 +659,46 @@ const parseMapDate = (value) => {
 
 const getFIRMapData = async (req, res) => {
     try {
+        if (
+            req.authority?.systemRole !== "officer" ||
+            req.authority?.user?.status !== "approved"
+        ) {
+            return res.status(403).json({
+                success: false,
+                message: "An approved officer account is required to view station crime markers",
+                error: "OFFICER_NOT_APPROVED",
+            });
+        }
+
+        const officer = await Officer.findById(req.authority.officer?._id)
+            .select("stationId status")
+            .lean();
+        if (!officer || officer.status !== "active") {
+            return res.status(403).json({
+                success: false,
+                message: "An active officer account is required to view station crime markers",
+                error: "OFFICER_INELIGIBLE",
+            });
+        }
+        if (!isValidObjectId(officer.stationId)) {
+            return res.status(403).json({
+                success: false,
+                message: "A valid assigned police station is required to view crime markers",
+                error: "STATION_ASSIGNMENT_REQUIRED",
+            });
+        }
+        const activeStation = await PoliceStation.findOne({
+            _id: officer.stationId,
+            isActive: true,
+        }).select("_id").lean();
+        if (!activeStation) {
+            return res.status(403).json({
+                success: false,
+                message: "The assigned police station is invalid or inactive",
+                error: "STATION_ASSIGNMENT_INVALID",
+            });
+        }
+
         const query = req.query || {};
         if (
             Object.keys(query).some((key) => !mapFilterKeys.has(key)) ||
@@ -679,7 +719,7 @@ const getFIRMapData = async (req, res) => {
             return invalid(res, "fromDate must be on or before toDate", "INVALID_DATE_RANGE");
         }
 
-        const filter = {};
+        const filter = { policeStationId: activeStation._id };
         if (query.crimeType !== undefined) {
             if (!mapCrimeTypes.includes(query.crimeType)) {
                 return invalid(res, "Unsupported crimeType", "INVALID_CRIME_TYPE");
@@ -695,10 +735,6 @@ const getFIRMapData = async (req, res) => {
                 filter.date.$lt = exclusiveEnd;
             }
         }
-        if (!isSeniorOfficerRank(req.authority?.rank) && req.authority?.systemRole !== "system_admin") {
-            filter.registeredBy = req.authority.officer._id;
-        }
-
         const caseMatch = query.caseStatus === undefined ? null : query.caseStatus;
         if (caseMatch && !mapCaseStatuses.includes(caseMatch)) {
             return invalid(res, "Unsupported caseStatus", "INVALID_CASE_STATUS");

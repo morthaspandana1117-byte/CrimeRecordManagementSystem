@@ -82,6 +82,7 @@ const registrationPayload = (rank, index) => ({
     name: `Registration ${rank}`,
     rank,
     department: "Criminal Investigation",
+    stationId: String(station._id),
     station: "Registration Station",
     phoneNumber: "5550101001",
     address: "Registration Avenue",
@@ -125,11 +126,7 @@ test("registration accepts all seven canonical ranks, rejects legacy labels, and
         assert.equal(pendingLogin.status, 403);
         assert.equal(pendingLogin.body.error, "ACCOUNT_PENDING_APPROVAL");
         const officer = await Officer.findOne({ officerId: `REG-${rank}` });
-        const stationAssignment = await request(app)
-            .patch(`/api/officers/${officer._id}/station`)
-            .set("Authorization", `Bearer ${adminToken}`)
-            .send({ stationId: String(station._id) });
-        assert.equal(stationAssignment.status, 200, rank);
+        assert.equal(String(officer.stationId), String(station._id), rank);
         const approval = await request(app)
             .patch(`/api/officers/${officer._id}/approve`)
             .set("Authorization", `Bearer ${adminToken}`);

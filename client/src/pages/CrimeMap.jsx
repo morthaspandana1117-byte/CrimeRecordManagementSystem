@@ -141,7 +141,7 @@ function CrimeMap() {
           <section className="report-control-panel mb-4">
             <p className="eyebrow mb-1">Map filters</p>
             <h2 className="section-title h4 mb-3">Filter accessible FIR records</h2>
-            <p className="text-secondary">Date filters use the FIR reported date (UTC). Case-status filtering applies to linked cases; the API retains the existing officer record-access scope.</p>
+            <p className="text-secondary">Markers show FIR locations for your assigned active police station, regardless of rank. Date and case-status filters apply to those station markers; opening records remains subject to existing record-access rules.</p>
             <form onSubmit={submitFilters}>
               <div className="row g-3 align-items-end">
                 <div className="col-12 col-sm-6 col-xl-3">

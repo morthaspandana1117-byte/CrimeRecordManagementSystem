@@ -28,6 +28,7 @@ import Reports from './pages/Reports'
 import AdvancedSearch from './pages/AdvancedSearch'
 import AIEvaluationDashboard from './pages/AIEvaluationDashboard'
 import ResetPassword from './pages/ResetPassword'
+import PoliceStationManagement from './pages/PoliceStationManagement'
 import { officerRanks, seniorOfficerManagementRanks, seniorOfficerRanks } from './authority'
 
 function HomeRedirect() {
@@ -51,6 +52,7 @@ function App() {
       <Route path="/ai-evaluation" element={<ProtectedRoute allowedSystemRoles={['system_admin']} allowedManagementRanks={seniorOfficerManagementRanks}><AIEvaluationDashboard /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AdminDashboard /></ProtectedRoute>} />
       <Route path="/admin/audit-logs" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><AuditLogs /></ProtectedRoute>} />
+      <Route path="/admin/police-stations" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><PoliceStationManagement /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
       <Route path="/officers/:id" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerDetails /></ProtectedRoute>} />
       <Route path="/officers/:id/edit" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerEdit /></ProtectedRoute>} />

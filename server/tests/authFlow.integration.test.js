@@ -28,6 +28,7 @@ const registrationPayload = (overrides = {}) => ({
     name: "Flow Officer",
     rank: "si",
     department: "Criminal Investigation",
+    stationId: String(station?._id || ""),
     station: "Flow Station",
     phoneNumber: "5550101010",
     address: "Flow Street",
@@ -42,11 +43,6 @@ const registerAndApprove = async (overrides) => {
     const payload = registrationPayload(overrides);
     const registered = await request(app).post("/api/auth/register").send(payload);
     assert.equal(registered.status, 201);
-    const assigned = await request(app)
-        .patch(`/api/officers/${registered.body.data.id}/station`)
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ stationId: String(station._id) });
-    assert.equal(assigned.status, 200);
     const approved = await request(app)
         .patch(`/api/officers/${registered.body.data.id}/approve`)
         .set("Authorization", `Bearer ${adminToken}`);
@@ -212,6 +208,9 @@ test("registered officers stay locked out until an admin approves them, then gai
     const officer = await Officer.findOne({ userId: user._id });
     assert.equal(String(officer._id), String(registered.body.data.id));
     assert.equal(officer.rank, "si");
+    assert.equal(String(officer.stationId), String(station._id));
+    assert.equal(officer.station, station.name);
+    assert.equal(user.isActive, false);
 
     const duplicate = await request(app)
         .post("/api/auth/register")
@@ -238,17 +237,17 @@ test("registered officers stay locked out until an admin approves them, then gai
     assert.equal(unauthenticatedApprove.status, 401);
     assert.equal((await User.findById(user._id)).status, "pending");
 
-    const stationAssignment = await request(app)
-        .patch(`/api/officers/${officer._id}/station`)
-        .set("Authorization", `Bearer ${adminToken}`)
-        .send({ stationId: String(station._id) });
-    assert.equal(stationAssignment.status, 200);
     const approved = await request(app)
         .patch(`/api/officers/${officer._id}/approve`)
         .set("Authorization", `Bearer ${adminToken}`);
     assert.equal(approved.status, 200);
     assert.equal(approved.body.data.status, "approved");
     assert.equal((await User.findById(user._id)).status, "approved");
+    assert.equal((await User.findById(user._id)).isActive, true);
+    const assignedOfficer = await Officer.findById(officer._id);
+    assert.equal(String(assignedOfficer.stationId), String(station._id));
+    assert.equal(assignedOfficer.station, station.name);
+    assert.equal(assignedOfficer.station, station.name);
 
     const approveAgain = await request(app)
         .patch(`/api/officers/${officer._id}/approve`)
