@@ -18,7 +18,6 @@ const adminItems = [
   { to: '/admin/dashboard', label: 'Dashboard', icon: '▦', end: true },
   { to: '/officers', label: 'Officer Management', icon: '♙' },
   { to: '/admin/audit-logs', label: 'Audit Logs', icon: '▤' },
-  { to: '/search', label: 'Advanced Search', icon: '⌕' },
 ]
 
 function DashboardSidebar({ title }) {
