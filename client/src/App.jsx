@@ -16,7 +16,6 @@ import CaseEdit from './pages/CaseEdit'
 import CaseList from './pages/CaseList'
 import FIRCreate from './pages/FIRCreate'
 import FIRDetails from './pages/FIRDetails'
-import FIREdit from './pages/FIREdit'
 import FIRList from './pages/FIRList'
 import ForgotPassword from './pages/ForgotPassword'
 import Login from './pages/Login'
@@ -63,7 +62,6 @@ function App() {
       <Route path="/firs" element={<ProtectedRoute allowedRanks={officerRanks}><FIRList /></ProtectedRoute>} />
       <Route path="/firs/create" element={<ProtectedRoute allowedRanks={officerRanks}><FIRCreate /></ProtectedRoute>} />
       <Route path="/firs/:id" element={<ProtectedRoute allowedRanks={officerRanks}><FIRDetails /></ProtectedRoute>} />
-      <Route path="/firs/:id/edit" element={<ProtectedRoute allowedRanks={officerRanks}><FIREdit /></ProtectedRoute>} />
       <Route path="/cases" element={<ProtectedRoute allowedRanks={officerRanks}><CaseList /></ProtectedRoute>} />
       <Route path="/cases/create" element={<ProtectedRoute allowedRanks={seniorOfficerRanks}><CaseCreate /></ProtectedRoute>} />
       <Route path="/cases/:id" element={<ProtectedRoute allowedRanks={officerRanks}><CaseDetails /></ProtectedRoute>} />

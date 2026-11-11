@@ -184,7 +184,6 @@ function FIRList() {
                     <td>
                       <div className="action-stack">
                         <button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/firs/${fir._id}`)} type="button">View</button>
-                        <button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/firs/${fir._id}/edit`)} type="button">Edit</button>
                       </div>
                     </td>
                   </tr>

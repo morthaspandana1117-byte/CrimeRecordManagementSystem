@@ -93,7 +93,6 @@ function FIRCreate() {
     const coordinateError = validateOptionalCoordinates(form.latitude, form.longitude)
     if (coordinateError) return coordinateError
     if (user?.role === 'admin' && !form.registeredBy) return 'Please select an eligible officer for this FIR.'
-    if (!form.criminalIds.length) return 'Select at least one criminal linked to this FIR.'
     return ''
   }
 
@@ -243,13 +242,15 @@ function FIRCreate() {
                 </div>
 
                 <div className="col-12">
-                  <label className="form-label" htmlFor="complaintText">Complaint details</label>
-                  <textarea className="form-control" id="complaintText" name="complaintText" onChange={updateField} required rows="3" value={form.complaintText} />
+                  <label className="form-label" htmlFor="complaintText">Complaint Details</label>
+                  <p className="form-text mt-0">Enter the complainant's statement describing what happened, including the reported incident details and any information provided by the complainant.</p>
+                  <textarea className="form-control" id="complaintText" name="complaintText" onChange={updateField} placeholder="Describe the incident as reported by the complainant..." required rows="3" value={form.complaintText} />
                 </div>
 
                 <div className="col-12">
-                  <label className="form-label" htmlFor="description">Case description</label>
-                  <textarea className="form-control" id="description" name="description" onChange={updateField} required rows="3" value={form.description} />
+                  <label className="form-label" htmlFor="description">Case Description</label>
+                  <p className="form-text mt-0">Provide a concise initial summary of the incident based on the information available to the police at the time of FIR registration.</p>
+                  <textarea className="form-control" id="description" name="description" onChange={updateField} placeholder="Enter the initial police summary of the incident..." required rows="3" value={form.description} />
                 </div>
 
                 <div className="col-12 col-md-6">
@@ -290,7 +291,8 @@ function FIRCreate() {
                 </div>
 
                 <div className="col-12">
-                  <label className="form-label">Related criminals</label>
+                  <label className="form-label">Suspected Criminals / Related Crime Records</label>
+                  <p className="form-text mt-0">Select any known suspected criminals or related criminal records associated with this incident. If the suspect is unknown or has not yet been identified, you can leave this section empty and register the FIR.</p>
                   <div className="row g-2">
                     {criminalOptions.length === 0 ? (
                       <div className="col-12">

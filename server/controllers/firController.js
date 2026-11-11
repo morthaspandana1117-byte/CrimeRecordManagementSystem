@@ -51,7 +51,6 @@ const required = [
     "description",
     "crimeType",
     "location",
-    "criminalIds",
     "status",
 ];
 
@@ -333,8 +332,8 @@ const validateFIR = async (res, body, partial = false, req = null) => {
     }
 
     if (body.criminalIds !== undefined) {
-        if (!Array.isArray(body.criminalIds) || body.criminalIds.length === 0) {
-            return "criminalIds must be a non-empty array";
+        if (!Array.isArray(body.criminalIds)) {
+            return "criminalIds must be an array";
         }
 
         if (new Set(body.criminalIds.map((value) => String(value))).size !== body.criminalIds.length) {
@@ -345,7 +344,7 @@ const validateFIR = async (res, body, partial = false, req = null) => {
             return "criminalIds contains an invalid ObjectId";
         }
 
-        if (!(await validateReferences(res, Criminal, body.criminalIds, "criminalIds"))) {
+        if (body.criminalIds.length && !(await validateReferences(res, Criminal, body.criminalIds, "criminalIds"))) {
             return null;
         }
     }
@@ -509,102 +508,18 @@ const getFIRById = async (req, res) => {
     }
 };
 
-const updateFIR = async (req, res) => {
-    try {
-        if (!isValidObjectId(req.params.id)) {
-            return invalid(res, "Invalid FIR ID", "INVALID_FIR_ID");
-        }
-
-        const updates = strikeAllowedFields(req.body);
-        if (!Object.keys(updates).length) {
-            return invalid(res, "No valid FIR fields were provided");
-        }
-
-        const existingFIR = await FIR.findById(req.params.id).select("registeredBy policeStation policeStationId");
-        if (!existingFIR) return notFound(res, "FIR");
-        if (!canAccessFIR(req, existingFIR)) {
-            return res.status(403).json({ success: false, message: "You may only update relevant FIRs", error: "FIR_ACCESS_DENIED" });
-        }
-
-        const systemRole = req.authority?.systemRole || req.user?.systemRole || (req.user?.role === "admin" ? "system_admin" : req.user?.role);
-        let officer = null;
-        if (systemRole === "officer") {
-            officer = await resolveOfficerForUser(req.user.userId);
-            if (!officer) {
-                return res.status(403).json({
-                    success: false,
-                    message: "Officer is not eligible to update FIRs",
-                    error: "OFFICER_INELIGIBLE",
-                });
-            }
-        }
-
-        if (systemRole === "officer") {
-            const requestedStationId = updates.policeStationId;
-            const existingStationId = existingFIR.policeStationId;
-            const stationIdChanged = requestedStationId !== undefined &&
-                String(requestedStationId || "") !== String(existingStationId || "");
-            const stationNameChanged = updates.policeStation !== undefined &&
-                updates.policeStation !== existingFIR.policeStation;
-
-            if (stationIdChanged || stationNameChanged) {
-                return res.status(403).json({
-                    success: false,
-                    message: "The police station assigned to an FIR cannot be changed",
-                    error: "POLICE_STATION_ASSIGNMENT_DENIED",
-                });
-            }
-
-            delete updates.policeStationId;
-            delete updates.policeStation;
-        } else if (updates.policeStationId !== undefined) {
-            const selectedStation = await resolveFIRStation(res, updates.policeStationId);
-            if (!selectedStation) return;
-            updates.policeStationId = selectedStation._id;
-            updates.policeStation = selectedStation.name;
-        } else if (updates.policeStation !== undefined && existingFIR.policeStationId) {
-            return invalid(
-                res,
-                "A linked police station can only be changed using policeStationId",
-                "POLICE_STATION_REFERENCE_REQUIRED",
-            );
-        }
-        if (systemRole === "officer") {
-            // Editing never transfers ownership: the registering officer is kept.
-            if (updates.registeredBy && String(updates.registeredBy) !== String(existingFIR.registeredBy)) {
-                return res.status(403).json({
-                    success: false,
-                    message: "FIR ownership cannot be changed through an update",
-                    error: "FORBIDDEN",
-                });
-            }
-            delete updates.registeredBy;
-        }
-
-        const result = await validateFIR(res, updates, true, req);
-        if (result !== "OK") return result ? invalid(res, result) : undefined;
-
-        const fir = await populate(
-            FIR.findByIdAndUpdate(req.params.id, updates, {
-                new: true,
-                runValidators: true,
-            }).select("-__v"),
-        );
-
-        return fir
-            ? res.status(200).json({
-                  success: true,
-                  message: "FIR updated successfully",
-                  data: fir,
-              })
-            : notFound(res, "FIR");
-    } catch (error) {
-        return handleError(res, error, "Update FIR error");
-    }
-};
+const rejectFIRUpdate = (req, res) =>
+    res.status(405).json({
+        success: false,
+        message: "FIR registration details cannot be edited after creation",
+        error: "FIR_IMMUTABLE",
+    });
 
 const updateFIRStatus = async (req, res) => {
     try {
+        if (!req.body || Object.keys(req.body).some((key) => key !== "status")) {
+            return invalid(res, "Only the FIR status may be changed through this workflow", "INVALID_FIR_STATUS_UPDATE");
+        }
         if (!isValidObjectId(req.params.id)) {
             return invalid(res, "Invalid FIR ID", "INVALID_FIR_ID");
         }
@@ -613,7 +528,7 @@ const updateFIRStatus = async (req, res) => {
         if (normalizedStatus === null) {
             return invalid(
                 res,
-                "status must be one of: Open, Under Investigation, Closed",
+                "status must be one of: Open, Registered, Under Investigation, Charge Sheet Filed, Closed",
                 "INVALID_FIR_STATUS",
             );
         }
@@ -821,7 +736,7 @@ module.exports = {
     getAllFIRs,
     getFIRById,
     getFIRMapData,
-    updateFIR,
+    rejectFIRUpdate,
     updateFIRStatus,
     normalizeFIRStatus,
     validateFIRStatus,

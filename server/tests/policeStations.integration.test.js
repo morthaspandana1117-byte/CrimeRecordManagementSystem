@@ -535,7 +535,7 @@ test("officer activation requires an existing active station assigned by an admi
     assert.equal((await User.findById(user._id)).isActive, true);
 });
 
-test("FIR creation and edits require the officer's approved station without weakening record authorization", async () => {
+test("FIR creation requires the officer's approved station and registration details remain immutable", async () => {
     const managerCannotReassign = await request(app)
         .put(`/api/officers/${officers.a._id}`)
         .set(auth(inspectorToken))
@@ -595,8 +595,8 @@ test("FIR creation and edits require the officer's approved station without weak
         .put(`/api/firs/${originalOtherStationFir._id}`)
         .set(auth(officerToken))
         .send({ policeStationId: String(station._id) });
-    assert.equal(changeToAssignedStation.status, 403);
-    assert.equal(changeToAssignedStation.body.error, "POLICE_STATION_ASSIGNMENT_DENIED");
+    assert.equal(changeToAssignedStation.status, 405);
+    assert.equal(changeToAssignedStation.body.error, "FIR_IMMUTABLE");
     const unchangedOriginal = await FIR.findById(originalOtherStationFir._id);
     assert.equal(String(unchangedOriginal.policeStationId), String(otherStation._id));
     assert.equal(unchangedOriginal.policeStation, otherStation.name);
@@ -612,14 +612,14 @@ test("FIR creation and edits require the officer's approved station without weak
         .put(`/api/firs/${legacyFir._id}`)
         .set(auth(officerToken))
         .send({ policeStation: "Forged station text" });
-    assert.equal(changeLegacyText.status, 403);
-    assert.equal(changeLegacyText.body.error, "POLICE_STATION_ASSIGNMENT_DENIED");
+    assert.equal(changeLegacyText.status, 405);
+    assert.equal(changeLegacyText.body.error, "FIR_IMMUTABLE");
     const assignLegacyReference = await request(app)
         .put(`/api/firs/${legacyFir._id}`)
         .set(auth(officerToken))
         .send({ policeStationId: String(station._id) });
-    assert.equal(assignLegacyReference.status, 403);
-    assert.equal(assignLegacyReference.body.error, "POLICE_STATION_ASSIGNMENT_DENIED");
+    assert.equal(assignLegacyReference.status, 405);
+    assert.equal(assignLegacyReference.body.error, "FIR_IMMUTABLE");
     const unchangedLegacy = await FIR.findById(legacyFir._id);
     assert.equal(unchangedLegacy.policeStation, "Legacy FIR Station");
     assert.equal(unchangedLegacy.policeStationId, undefined);
@@ -628,7 +628,7 @@ test("FIR creation and edits require the officer's approved station without weak
         .put(`/api/firs/${linkedFir.body.data._id}`)
         .set(auth(officerToken))
         .send({ description: "Updated without changing station" });
-    assert.equal(unrelatedEdit.status, 200);
+    assert.equal(unrelatedEdit.status, 405);
     const linkedAfterUnrelatedEdit = await FIR.findById(linkedFir.body.data._id);
     assert.equal(String(linkedAfterUnrelatedEdit.policeStationId), String(station._id));
     assert.equal(linkedAfterUnrelatedEdit.policeStation, station.name);
@@ -636,7 +636,7 @@ test("FIR creation and edits require the officer's approved station without weak
     const noStationChanges = await request(app)
         .put(`/api/firs/${linkedFir.body.data._id}`)
         .set(auth(officerToken));
-    assert.equal(noStationChanges.status, 400);
+    assert.equal(noStationChanges.status, 405);
 
     const inaccessibleFir = await request(app)
         .get(`/api/firs/${linkedFir.body.data._id}`)
@@ -647,15 +647,15 @@ test("FIR creation and edits require the officer's approved station without weak
         .put(`/api/firs/${linkedFir.body.data._id}`)
         .set(auth(officerToken))
         .send({ policeStationId: String(otherStation._id) });
-    assert.equal(otherStationUpdate.status, 403);
-    assert.equal(otherStationUpdate.body.error, "POLICE_STATION_ASSIGNMENT_DENIED");
+    assert.equal(otherStationUpdate.status, 405);
+    assert.equal(otherStationUpdate.body.error, "FIR_IMMUTABLE");
 
     const textStationSpoof = await request(app)
         .put(`/api/firs/${linkedFir.body.data._id}`)
         .set(auth(officerToken))
         .send({ policeStation: "Another station" });
-    assert.equal(textStationSpoof.status, 403);
-    assert.equal(textStationSpoof.body.error, "POLICE_STATION_ASSIGNMENT_DENIED");
+    assert.equal(textStationSpoof.status, 405);
+    assert.equal(textStationSpoof.body.error, "FIR_IMMUTABLE");
 
     const caseRecord = await Case.create({
         caseNo: "PS-LINKED-CASE",

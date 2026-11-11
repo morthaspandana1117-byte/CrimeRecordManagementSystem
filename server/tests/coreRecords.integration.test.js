@@ -111,10 +111,57 @@ test.after(async () => {
     await mongoServer.stop();
 });
 
-test("FIR create, filtered list, retrieval, update, and status change persist through the API", async () => {
+test("FIR registration supports zero or multiple suspected criminals and rejects invalid IDs", async () => {
+    const unknownSuspect = await request(app)
+        .post("/api/firs")
+        .set(auth("officerA"))
+        .send(firPayload({ firNo: "CORE-FIR-UNKNOWN", crimeType: "Other", criminalIds: [] }));
+    assert.equal(unknownSuspect.status, 201);
+    assert.deepEqual(unknownSuspect.body.data.criminalIds, []);
+    const storedUnknown = await FIR.findById(unknownSuspect.body.data._id).lean();
+    assert.deepEqual(storedUnknown.criminalIds, []);
+
+    const secondCriminal = await Criminal.create({
+        criminalId: "CORE-CRIM-002",
+        fullName: "Second Fixture Suspect",
+        dateOfBirth: "1992-02-02",
+        gender: "Female",
+        address: "Second Fixture Address",
+        status: "active",
+    });
+    const multiple = await request(app)
+        .post("/api/firs")
+        .set(auth("officerA"))
+        .send(firPayload({ firNo: "CORE-FIR-MULTI", crimeType: "Other", criminalIds: [String(criminal._id), String(secondCriminal._id)] }));
+    assert.equal(multiple.status, 201);
+    assert.equal(multiple.body.data.criminalIds.length, 2);
+
+    const invalid = await request(app)
+        .post("/api/firs")
+        .set(auth("officerA"))
+        .send(firPayload({ firNo: "CORE-FIR-BAD-CRIMINAL", criminalIds: [String(new mongoose.Types.ObjectId())] }));
+    assert.equal(invalid.status, 400);
+    assert.equal(await FIR.exists({ firNo: "CORE-FIR-BAD-CRIMINAL" }), null);
+
+    const independentDescriptions = await request(app)
+        .post("/api/firs")
+        .set(auth("officerA"))
+        .send(firPayload({ firNo: "CORE-FIR-DESCRIPTIONS", crimeType: "Other", criminalIds: [], complaint: { complainantName: "Witness", complaintText: "The witness reported a red bicycle taken at noon." }, description: "Police summary: likely theft near the market entrance." }));
+    assert.equal(independentDescriptions.status, 201);
+    const storedDescriptions = await FIR.findById(independentDescriptions.body.data._id).lean();
+    assert.equal(storedDescriptions.complaint.complaintText, "The witness reported a red bicycle taken at noon.");
+    assert.equal(storedDescriptions.description, "Police summary: likely theft near the market entrance.");
+    assert.notEqual(storedDescriptions.complaint.complaintText, storedDescriptions.description);
+
+    await FIR.deleteMany({ firNo: { $in: ["CORE-FIR-UNKNOWN", "CORE-FIR-MULTI", "CORE-FIR-DESCRIPTIONS"] } });
+    await Criminal.deleteOne({ _id: secondCriminal._id });
+});
+
+test("FIR create, filtered list, retrieval, immutable registration details, and status change persist through the API", async () => {
     const created = await request(app).post("/api/firs").set(auth("officerA")).send(firPayload());
     assert.equal(created.status, 201);
     assert.equal(created.body.data.status, "Open", "status defaults to Open");
+    assert.deepEqual(created.body.data.criminalIds.map((item) => item._id), [String(criminal._id)]);
     assert.equal(String(created.body.data.registeredBy._id), String(officers.officerA._id), "registeredBy is server-resolved");
     const firId = created.body.data._id;
     assert.ok(await FIR.exists({ _id: firId, firNo: "CORE-FIR-001" }));
@@ -161,13 +208,17 @@ test("FIR create, filtered list, retrieval, update, and status change persist th
     assert.equal(fetched.body.data.firNo, "CORE-FIR-001");
     assert.equal(fetched.body.data.criminalIds[0].criminalId, "CORE-CRIM-000");
 
+    const originalComplaint = JSON.stringify((await FIR.findById(firId)).complaint.toObject());
     const updated = await request(app)
         .put(`/api/firs/${firId}`)
         .set(auth("officerA"))
-        .send({ description: "Bicycle theft with CCTV footage available" });
-    assert.equal(updated.status, 200);
+        .send({ description: "Bicycle theft with CCTV footage available", complaint: { complaintText: "Forged" }, status: "Closed" });
+    assert.equal(updated.status, 405);
+    assert.equal(updated.body.error, "FIR_IMMUTABLE");
     const storedAfterUpdate = await FIR.findById(firId);
-    assert.equal(storedAfterUpdate.description, "Bicycle theft with CCTV footage available");
+    assert.equal(storedAfterUpdate.description, "Bicycle theft reported by complainant");
+    assert.equal(JSON.stringify(storedAfterUpdate.complaint.toObject()), originalComplaint);
+    assert.equal(storedAfterUpdate.status, "Open");
     assert.equal(String(storedAfterUpdate.registeredBy), String(officers.officerA._id));
 
     const statusChanged = await request(app)
@@ -177,12 +228,21 @@ test("FIR create, filtered list, retrieval, update, and status change persist th
     assert.equal(statusChanged.status, 200);
     assert.equal((await FIR.findById(firId)).status, "Under Investigation");
 
+    const massAssignment = await request(app)
+        .patch(`/api/firs/${firId}/status`)
+        .set(auth("officerA"))
+        .send({ status: "Closed", description: "Attempted indirect edit" });
+    assert.equal(massAssignment.status, 400);
+    assert.equal(massAssignment.body.error, "INVALID_FIR_STATUS_UPDATE");
+    assert.equal((await FIR.findById(firId)).description, "Bicycle theft reported by complainant");
+
     const badStatus = await request(app)
         .patch(`/api/firs/${firId}/status`)
         .set(auth("officerA"))
         .send({ status: "Archived" });
     assert.equal(badStatus.status, 400);
     assert.equal(badStatus.body.error, "INVALID_FIR_STATUS");
+    assert.equal(badStatus.body.message, "status must be one of: Open, Registered, Under Investigation, Charge Sheet Filed, Closed");
     assert.equal((await FIR.findById(firId)).status, "Under Investigation");
 });
 
@@ -206,8 +266,8 @@ test("FIR access is scoped to the registering investigating officer and duplicat
         .put(`/api/firs/${firId}`)
         .set(auth("officerB"))
         .send({ description: "Unauthorized edit" });
-    assert.equal(otherUpdate.status, 403);
-    assert.equal(otherUpdate.body.error, "FIR_ACCESS_DENIED");
+    assert.equal(otherUpdate.status, 405);
+    assert.equal(otherUpdate.body.error, "FIR_IMMUTABLE");
 
     const otherStatus = await request(app)
         .patch(`/api/firs/${firId}/status`)
@@ -232,7 +292,7 @@ test("FIR access is scoped to the registering investigating officer and duplicat
     assert.equal(await FIR.countDocuments({ firNo: "CORE-FIR-SCOPE" }), 1);
 });
 
-test("a senior officer editing a FIR does not take ownership away from the registering officer", async () => {
+test("all roles are unable to edit FIR registration details, while authorized reads still work", async () => {
     const created = await request(app)
         .post("/api/firs")
         .set(auth("officerA"))
@@ -240,43 +300,49 @@ test("a senior officer editing a FIR does not take ownership away from the regis
     assert.equal(created.status, 201);
     const firId = created.body.data._id;
     const ownerId = String(officers.officerA._id);
-
+    const original = await FIR.findById(firId).lean();
     const seniorEdit = await request(app)
         .put(`/api/firs/${firId}`)
         .set(auth("inspector"))
         .send({ description: "Inspector reviewed the complaint" });
-    assert.equal(seniorEdit.status, 200);
-    assert.equal(String(seniorEdit.body.data.registeredBy._id), ownerId);
-    const storedAfterEdit = await FIR.findById(firId);
-    assert.equal(storedAfterEdit.description, "Inspector reviewed the complaint");
-    assert.equal(String(storedAfterEdit.registeredBy), ownerId);
+    assert.equal(seniorEdit.status, 405);
+    assert.equal(seniorEdit.body.error, "FIR_IMMUTABLE");
+
+    const adminEdit = await request(app).put(`/api/firs/${firId}`).set(auth("admin")).send({ description: "Admin edit" });
+    assert.ok([403, 405].includes(adminEdit.status));
+
+    const unauthenticatedEdit = await request(app).put(`/api/firs/${firId}`).send({ description: "Anonymous edit" });
+    assert.equal(unauthenticatedEdit.status, 401);
+    const storedAfterEdits = await FIR.findById(firId).lean();
+    assert.equal(storedAfterEdits.description, original.description);
+    assert.equal(String(storedAfterEdits.registeredBy), String(original.registeredBy));
 
     const ownerGet = await request(app).get(`/api/firs/${firId}`).set(auth("officerA"));
     assert.equal(ownerGet.status, 200);
-    assert.equal(ownerGet.body.data.description, "Inspector reviewed the complaint");
+    assert.equal(ownerGet.body.data.description, original.description);
     const ownerList = await request(app).get("/api/firs?search=CORE-FIR-OWNER").set(auth("officerA"));
     assert.deepEqual(ownerList.body.data.map((fir) => fir.firNo), ["CORE-FIR-OWNER"]);
     const ownerEdit = await request(app)
         .put(`/api/firs/${firId}`)
         .set(auth("officerA"))
         .send({ description: "Owner follow-up" });
-    assert.equal(ownerEdit.status, 200);
+    assert.equal(ownerEdit.status, 405);
 
     const explicitTakeover = await request(app)
         .put(`/api/firs/${firId}`)
         .set(auth("inspector"))
         .send({ registeredBy: String(officers.inspector._id), description: "Takeover attempt" });
-    assert.equal(explicitTakeover.status, 403);
-    assert.equal(explicitTakeover.body.error, "FORBIDDEN");
+    assert.equal(explicitTakeover.status, 405);
+    assert.equal(explicitTakeover.body.error, "FIR_IMMUTABLE");
     const storedAfterTakeover = await FIR.findById(firId);
     assert.equal(String(storedAfterTakeover.registeredBy), ownerId);
-    assert.equal(storedAfterTakeover.description, "Owner follow-up");
+    assert.equal(storedAfterTakeover.description, original.description);
 
     const sameOwner = await request(app)
         .put(`/api/firs/${firId}`)
         .set(auth("inspector"))
         .send({ registeredBy: ownerId, description: "Inspector confirmed owner" });
-    assert.equal(sameOwner.status, 200);
+    assert.equal(sameOwner.status, 405);
     assert.equal(String((await FIR.findById(firId)).registeredBy), ownerId);
 
     const otherOfficerGet = await request(app).get(`/api/firs/${firId}`).set(auth("officerB"));
@@ -429,8 +495,8 @@ test("malformed IDs return 400 and nonexistent IDs return 404 across core record
         .put(`/api/firs/${missingId}`)
         .set(auth("inspector"))
         .send({ description: "No such FIR" });
-    assert.equal(missingFIRUpdate.status, 404);
-    assert.equal(missingFIRUpdate.body.error, "FIR_NOT_FOUND");
+    assert.equal(missingFIRUpdate.status, 405);
+    assert.equal(missingFIRUpdate.body.error, "FIR_IMMUTABLE");
 
     const missingFIRStatus = await request(app)
         .patch(`/api/firs/${missingId}/status`)
