@@ -115,7 +115,7 @@ test('getMe returns 404 when the user does not exist', async (t) => {
   const { mock } = require('node:test');
 
   mock.method(User, 'findById', () => ({
-    select: async () => null,
+    select: () => ({ lean: async () => null }),
   }));
 
   t.after(() => mock.restoreAll());

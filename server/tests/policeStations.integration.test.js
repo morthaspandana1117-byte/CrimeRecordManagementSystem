@@ -337,7 +337,7 @@ test("officer registration stores an active canonical station directly and appro
         .set(auth(inspectorToken))
         .send({ stationId: String(otherStation._id) });
     assert.equal(unauthorizedStationEdit.status, 403);
-    assert.equal(unauthorizedStationEdit.body.error, "STATION_ASSIGNMENT_DENIED");
+    assert.equal(unauthorizedStationEdit.body.error, "INSUFFICIENT_PERMISSIONS");
 
     await Officer.collection.updateOne({ _id: storedOfficer._id }, { $unset: { stationId: "" } });
     const approvalWithoutStation = await request(app)
@@ -478,7 +478,7 @@ test("officer activation requires an existing active station assigned by an admi
         .set(auth(officerToken))
         .send({ stationId: String(station._id) });
     assert.equal(unauthorizedAssignment.status, 403);
-    assert.equal(unauthorizedAssignment.body.error, "STATION_ASSIGNMENT_DENIED");
+    assert.equal(unauthorizedAssignment.body.error, "INSUFFICIENT_PERMISSIONS");
 
     const unauthorizedStationCorrection = await request(app)
         .patch(`/api/officers/${legacyOfficer._id}/station`)
@@ -545,7 +545,7 @@ test("FIR creation requires the officer's approved station and registration deta
             requestedStationId: String(inactiveStation._id),
         });
     assert.equal(managerCannotReassign.status, 403);
-    assert.equal(managerCannotReassign.body.error, "STATION_ASSIGNMENT_DENIED");
+    assert.equal(managerCannotReassign.body.error, "INSUFFICIENT_PERMISSIONS");
     const removedManualAssignment = await request(app)
         .patch(`/api/officers/${officers.a._id}/station`)
         .set(auth(adminToken))

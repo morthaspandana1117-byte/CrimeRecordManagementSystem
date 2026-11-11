@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { getRank, isSeniorOfficer, officerRankOptions, officerRanks } from "../src/authority.js"
+import { canManageOfficers, getRank, isSeniorOfficer, officerRankOptions, officerRanks } from "../src/authority.js"
 
 test("registration exposes exactly the seven canonical police ranks", () => {
   assert.deepEqual(officerRankOptions.map((option) => option.value), [
@@ -23,4 +23,6 @@ test("frontend rank helpers preserve legacy records without granting senior priv
   assert.equal(isSeniorOfficer({ role: "officer", rank: "inspector" }), true)
   assert.equal(isSeniorOfficer({ role: "officer", rank: "si" }), false)
   assert.equal(isSeniorOfficer({ role: "officer", rank: "constable" }), false)
+  assert.equal(canManageOfficers({ role: "officer", rank: "si", managementRank: "si" }), true)
+  assert.equal(canManageOfficers({ role: "officer", rank: "asi", managementRank: "asi" }), false)
 })

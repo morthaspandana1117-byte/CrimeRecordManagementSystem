@@ -398,9 +398,9 @@ const login = async (req, res) => {
 
 const getMe = async (req, res) => {
     try {
-        const user = req.authority?.user || await User.findById(req.user.userId).select(
-            "-passwordHash",
-        );
+        const user = await User.findById(req.user.userId)
+            .select("username email role status isActive createdAt")
+            .lean();
 
         if (!user) {
             return res.status(404).json({
@@ -412,7 +412,10 @@ const getMe = async (req, res) => {
 
         const systemRole = normalizeSystemRole(user.role);
         const officer = systemRole === "officer"
-            ? req.authority?.officer || await Officer.findOne({ userId: user._id }).select("rank")
+            ? await Officer.findOne({ userId: user._id })
+                .select("officerId badgeNumber name rank department station stationId phoneNumber joiningDate status")
+                .populate("stationId", "name")
+                .lean()
             : null;
 
         res.status(200).json({
@@ -423,10 +426,19 @@ const getMe = async (req, res) => {
                 email: user.email,
                 role: systemRole === "system_admin" ? "admin" : "officer",
                 systemRole,
+                name: officer?.name || null,
+                officerId: officer?.officerId || null,
+                badgeNumber: officer?.badgeNumber || null,
+                phoneNumber: officer?.phoneNumber || null,
+                department: officer?.department || null,
+                assignedStation: officer?.stationId?.name || officer?.station || null,
+                employmentStatus: officer?.status || null,
+                joiningDate: officer?.joiningDate || null,
                 rank: officer ? normalizeOfficerRank(officer.rank) : null,
                 managementRank: officer ? normalizeOfficerManagementRank(officer.rank) : null,
                 status: user.status || "approved",
                 isActive: user.isActive,
+                createdAt: user.createdAt,
             },
         });
     } catch (error) {

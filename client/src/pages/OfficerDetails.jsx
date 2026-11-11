@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../context/useAuth'
+import { isSystemAdmin } from '../authority'
 import { getCases, getOfficerById } from '../services/api'
 
 const formatDate = (value) => {
@@ -26,6 +28,8 @@ const badgeClass = (status) => {
 }
 
 function OfficerDetails() {
+  const { user } = useAuth()
+  const systemAdmin = isSystemAdmin(user)
   const { id } = useParams()
   const navigate = useNavigate()
   const [officer, setOfficer] = useState(null)
@@ -134,7 +138,7 @@ function OfficerDetails() {
           </div>
           <div className="d-flex flex-wrap gap-2">
             <button className="btn btn-outline-light" onClick={() => navigate('/officers')} type="button">Back to Officer Management</button>
-            <button className="btn btn-primary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Edit Officer</button>
+            {systemAdmin && <button className="btn btn-primary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Edit Officer</button>}
           </div>
         </div>
       </header>

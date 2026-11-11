@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
-import { isSeniorOfficer } from '../authority'
+import { canManageOfficers } from '../authority'
 
 const officerItems = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦', end: true },
@@ -27,7 +27,7 @@ function DashboardSidebar({ title }) {
   const isAdmin = user?.role === 'admin' || user?.systemRole === 'system_admin'
   const items = isAdmin
     ? adminItems
-    : isSeniorOfficer(user)
+    : canManageOfficers(user)
       ? [...officerItems, { to: '/officers', label: 'Manage Officers', icon: '♙' }]
       : officerItems
 
@@ -68,6 +68,10 @@ function DashboardSidebar({ title }) {
         <div className="sidebar-footer">
           <span className="sidebar-page-label">{title}</span>
           <button className="sidebar-logout" onClick={handleLogout} type="button"><span aria-hidden="true">↪</span> Log out</button>
+          <NavLink className="sidebar-link" onClick={() => setOpen(false)} to="/profile">
+            <span className="sidebar-icon" aria-hidden="true">♙</span>
+            <span>Profile</span>
+          </NavLink>
         </div>
       </aside>
     </>

@@ -277,13 +277,28 @@ test("Officer Management permissions follow system role, not officer rank", asyn
     assert.deepEqual(Object.keys(adminAccount).sort(), [
         "_id",
         "accountStatus",
+        "address",
         "approvalStatus",
+        "badgeNumber",
+        "createdAt",
+        "department",
         "email",
+        "employmentStatus",
+        "joiningDate",
+        "name",
+        "officerId",
+        "phoneNumber",
+        "rank",
         "stationAssignmentStatus",
         "stationId",
         "stationName",
+        "userId",
         "username",
     ]);
+    for (const secret of ["password", "passwordHash", "passwordResetToken", "passwordResetExpires", "token", "refreshToken"]) {
+        assert.equal(adminAccount[secret], undefined);
+        assert.equal(adminAccount.userId[secret], undefined);
+    }
 
     const adminDetails = await request(app)
         .get(`/api/officers/${accountStatusTarget._id}`)

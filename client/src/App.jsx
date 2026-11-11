@@ -28,6 +28,7 @@ import AdvancedSearch from './pages/AdvancedSearch'
 import AIEvaluationDashboard from './pages/AIEvaluationDashboard'
 import ResetPassword from './pages/ResetPassword'
 import PoliceStationManagement from './pages/PoliceStationManagement'
+import Profile from './pages/Profile'
 import { officerRanks, seniorOfficerManagementRanks, seniorOfficerRanks } from './authority'
 
 function HomeRedirect() {
@@ -45,6 +46,7 @@ function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password/:token" element={<ResetPassword />} />
       <Route path="/dashboard" element={<ProtectedRoute allowedRanks={officerRanks}><Dashboard /></ProtectedRoute>} />
+      <Route path="/profile" element={<ProtectedRoute allowedSystemRoles={['system_admin', 'officer']}><Profile /></ProtectedRoute>} />
       <Route path="/crime-map" element={<ProtectedRoute allowedRanks={officerRanks}><CrimeMap /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute allowedRanks={officerRanks}><Reports /></ProtectedRoute>} />
       <Route path="/search" element={<ProtectedRoute allowedRanks={officerRanks}><AdvancedSearch /></ProtectedRoute>} />
@@ -54,7 +56,7 @@ function App() {
       <Route path="/admin/police-stations" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><PoliceStationManagement /></ProtectedRoute>} />
       <Route path="/officers" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks} allowSystemAdmin><OfficerManagement /></ProtectedRoute>} />
       <Route path="/officers/:id" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerDetails /></ProtectedRoute>} />
-      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedManagementRanks={seniorOfficerManagementRanks}><OfficerEdit /></ProtectedRoute>} />
+      <Route path="/officers/:id/edit" element={<ProtectedRoute allowedSystemRoles={['system_admin']}><OfficerEdit /></ProtectedRoute>} />
       <Route path="/criminals" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalList /></ProtectedRoute>} />
       <Route path="/criminals/add" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalAdd /></ProtectedRoute>} />
       <Route path="/criminals/:id" element={<ProtectedRoute allowedRanks={officerRanks}><CriminalDetails /></ProtectedRoute>} />

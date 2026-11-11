@@ -37,4 +37,4 @@ export const isSystemAdmin = (user) => getSystemRole(user) === 'system_admin'
 export const isOfficer = (user) => getSystemRole(user) === 'officer'
 export const canCheckEvidenceIntegrity = (user) => isOfficer(user) && seniorOfficerRanks.includes(getRank(user))
 export const isSeniorOfficer = (user) => isOfficer(user) && seniorOfficerRanks.includes(getRank(user))
-export const canManageOfficers = (user) => isSystemAdmin(user) || isSeniorOfficer(user)
+export const canManageOfficers = (user) => isSystemAdmin(user) || (isOfficer(user) && seniorOfficerManagementRanks.includes(getManagementRank(user)))

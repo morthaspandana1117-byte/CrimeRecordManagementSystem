@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getDashboardStats } from '../services/api'
-import { isSeniorOfficer } from '../authority'
+import { canManageOfficers, isSeniorOfficer } from '../authority'
 import DashboardSidebar from '../components/DashboardSidebar'
 
 const statCards = [
@@ -64,7 +64,7 @@ function Dashboard() {
           <button className="btn btn-outline-primary" onClick={() => navigate('/cases')} type="button">{isSeniorOfficer(user) ? 'Manage Cases' : 'My Cases'}</button>
           <button className="btn btn-outline-primary" onClick={() => navigate('/reports')} type="button">Reports</button>
           <button className="btn btn-outline-primary" onClick={() => navigate('/crime-map')} type="button">Crime map</button>
-          {isSeniorOfficer(user) && <button className="btn btn-outline-primary" onClick={() => navigate('/officers')} type="button">Manage Officers</button>}
+          {canManageOfficers(user) && <button className="btn btn-outline-primary" onClick={() => navigate('/officers')} type="button">Manage Officers</button>}
         </div>
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3">
           <div><p className="eyebrow mb-1">Operational overview</p><h2 className="section-title mb-0">Record statistics</h2></div>

@@ -19,7 +19,7 @@ function OfficerEdit() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [form, setForm] = useState({
-    username: '', email: '', password: '', officerId: '', badgeNumber: '', name: '', rank: ranks[0],
+    officerId: '', badgeNumber: '', name: '', rank: ranks[0],
     department: departments[0], station: '', phoneNumber: '', address: '', joiningDate: '',
   })
   const [loading, setLoading] = useState(true)
@@ -38,9 +38,6 @@ function OfficerEdit() {
         return
       }
       setForm({
-        username: officer.userId?.username || '',
-        email: officer.userId?.email || '',
-        password: '',
         officerId: officer.officerId || '',
         badgeNumber: officer.badgeNumber || '',
         name: officer.name || '',
@@ -75,28 +72,12 @@ function OfficerEdit() {
     setError('')
     setSuccessMessage('')
 
-    const username = form.username.trim()
-    const email = form.email.trim()
-    const password = form.password.trim()
-
-    if (!username || !email || !form.officerId.trim() || !form.badgeNumber.trim() || !form.name.trim() || !form.rank || !form.department || !form.phoneNumber.trim() || !form.address.trim() || !form.joiningDate) {
+    if (!form.officerId.trim() || !form.badgeNumber.trim() || !form.name.trim() || !form.rank || !form.department || !form.phoneNumber.trim() || !form.address.trim() || !form.joiningDate) {
       setError('Please complete all required fields before saving.')
       return
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError('Please enter a valid email address.')
-      return
-    }
-
-    if (password && password.length < 6) {
-      setError('Password must be at least 6 characters long.')
-      return
-    }
-
     const payload = {
-      username,
-      email,
       officerId: form.officerId.trim(),
       badgeNumber: form.badgeNumber.trim(),
       name: form.name.trim(),
@@ -105,7 +86,6 @@ function OfficerEdit() {
       phoneNumber: form.phoneNumber.trim(),
       address: form.address.trim(),
       joiningDate: form.joiningDate,
-      ...(password ? { password } : {}),
     }
 
     try {
@@ -158,21 +138,6 @@ function OfficerEdit() {
           ) : (
             <form onSubmit={submit} noValidate>
               <div className="row g-3">
-                <div className="col-12 col-md-6">
-                  <label className="form-label" htmlFor="username">Username</label>
-                  <input className="form-control" id="username" name="username" onChange={updateField} required value={form.username} />
-                </div>
-                <div className="col-12 col-md-6">
-                  <label className="form-label" htmlFor="email">Email</label>
-                  <input className="form-control" id="email" name="email" onChange={updateField} required type="email" value={form.email} />
-                </div>
-
-                <div className="col-12 col-md-6">
-                  <label className="form-label" htmlFor="password">New password (optional)</label>
-                  <input className="form-control" id="password" minLength={6} name="password" onChange={updateField} type="password" value={form.password} />
-                  <div className="form-text">Leave blank to keep the current password.</div>
-                </div>
-
                 <div className="col-12 col-md-6">
                   <label className="form-label" htmlFor="officerId">Officer ID</label>
                   <input className="form-control" id="officerId" name="officerId" onChange={updateField} required value={form.officerId} />

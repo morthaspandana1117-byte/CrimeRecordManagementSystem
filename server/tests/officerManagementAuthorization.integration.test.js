@@ -114,7 +114,7 @@ test.after(async () => {
     await mongoServer.stop();
 });
 
-test("senior ranks can manage only strictly lower-ranked officers", async () => {
+test("senior ranks can only view strictly lower-ranked officers", async () => {
     for (let managerIndex = 0; managerIndex < rankHierarchy.length; managerIndex += 1) {
         const managerRank = rankHierarchy[managerIndex];
         const list = await request(app)
@@ -136,12 +136,27 @@ test("senior ranks can manage only strictly lower-ranked officers", async () => 
 
         for (let targetIndex = 0; targetIndex < rankHierarchy.length; targetIndex += 1) {
             const targetRank = rankHierarchy[targetIndex];
+            const nameBefore = (await Officer.findById(officers[targetRank]._id)).name;
             const response = await request(app)
                 .put(`/api/officers/${officers[targetRank]._id}`)
                 .set("Authorization", `Bearer ${tokens[managerRank]}`)
                 .send({ name: `Edited by ${managerRank}` });
-            assert.equal(response.status, managerIndex < 4 && targetIndex > managerIndex ? 200 : 403,
+            assert.equal(response.status, 403,
                 `${managerRank} -> ${targetRank}`);
+            assert.equal((await Officer.findById(officers[targetRank]._id)).name, nameBefore);
+
+            const details = await request(app)
+                .get(`/api/officers/${officers[targetRank]._id}`)
+                .set("Authorization", `Bearer ${tokens[managerRank]}`);
+            assert.equal(details.status, managerIndex < 4 && targetIndex > managerIndex ? 200 : 403,
+                `${managerRank} details -> ${targetRank}`);
+        }
+
+        if (managerIndex < 4) {
+            const selfDetails = await request(app)
+                .get(`/api/officers/${officers[managerRank]._id}`)
+                .set("Authorization", `Bearer ${tokens[managerRank]}`);
+            assert.equal(selfDetails.status, 403, `${managerRank} cannot use management to inspect self`);
         }
     }
 
@@ -165,7 +180,15 @@ test("officer and administrative lists use separate authorization scopes", async
         .set("Authorization", `Bearer ${tokens.admin}`);
     assert.equal(adminList.status, 200);
     assert.ok(adminList.body.data.length > 0);
-    assert.equal(adminList.body.data.some((record) => "rank" in record || "department" in record), false);
+    assert.equal(adminList.body.data.length, rankHierarchy.length);
+    assert.deepEqual(adminList.body.data.map((record) => record.rank).sort(), [...rankHierarchy].sort());
+    assert.ok(adminList.body.data.every((record) => record.name && record.officerId && record.userId?.role === "officer"));
+    for (const record of adminList.body.data) {
+        for (const secret of ["password", "passwordHash", "passwordResetToken", "passwordResetExpires", "token", "refreshToken"]) {
+            assert.equal(record[secret], undefined);
+            assert.equal(record.userId[secret], undefined);
+        }
+    }
 });
 
 test("authentication returns a separate server-resolved management rank", async () => {
@@ -184,7 +207,7 @@ test("authentication returns a separate server-resolved management rank", async 
     assert.equal(currentUser.body.data.managementRank, "si");
 });
 
-test("system admin handles approval and account status, not police profile edits or operations", async () => {
+test("system admin views and edits profiles and retains approval and account management", async () => {
     const approvedRegistration = await createPendingOfficer("management-pending-approve", "MGT-PENDING-A", "MPA001");
     const rejectedRegistration = await createPendingOfficer("management-pending-reject", "MGT-PENDING-R", "MPR001");
 
@@ -202,23 +225,33 @@ test("system admin handles approval and account status, not police profile edits
     const adminProfileEdit = await request(app)
         .put(`/api/officers/${officers.constable._id}`)
         .set("Authorization", `Bearer ${tokens.admin}`)
-        .send({ name: "Admin cannot profile edit" });
-    assert.equal(adminProfileEdit.status, 403);
+        .send({ name: "Admin profile edit", phoneNumber: "5552222222" });
+    assert.equal(adminProfileEdit.status, 200);
+    assert.equal(adminProfileEdit.body.data.name, "Admin profile edit");
+    assert.equal((await Officer.findById(officers.constable._id)).phoneNumber, "5552222222");
+    await Officer.updateOne({ _id: officers.constable._id }, { $set: { name: "Officer constable", phoneNumber: "5551000000" } });
+
     const rankBeforeAdminAttempt = (await Officer.findById(officers.constable._id)).rank;
     const adminRankEdit = await request(app)
         .put(`/api/officers/${officers.constable._id}`)
         .set("Authorization", `Bearer ${tokens.admin}`)
-        .send({ rank: "sp" });
-    assert.equal(adminRankEdit.status, 403);
-    assert.equal((await Officer.findById(officers.constable._id)).rank, rankBeforeAdminAttempt);
+        .send({ rank: " SI " });
+    assert.equal(adminRankEdit.status, 200);
+    assert.equal(adminRankEdit.body.data.rank, "si");
+    assert.equal(rankBeforeAdminAttempt, "constable");
+    await Officer.updateOne({ _id: officers.constable._id }, { $set: { rank: rankBeforeAdminAttempt } });
 
     const adminOfficerDetails = await request(app)
         .get(`/api/officers/${officers.constable._id}`)
         .set("Authorization", `Bearer ${tokens.admin}`);
     assert.equal(adminOfficerDetails.status, 200);
-    assert.deepEqual(Object.keys(adminOfficerDetails.body.data).sort(), [
-        "_id", "accountStatus", "approvalStatus", "email", "username",
-    ]);
+    assert.equal(adminOfficerDetails.body.data.name, "Officer constable");
+    assert.equal(adminOfficerDetails.body.data.rank, "constable");
+    assert.equal(adminOfficerDetails.body.data.userId.username, users.constable.username);
+    for (const secret of ["password", "passwordHash", "passwordResetToken", "passwordResetExpires", "token", "refreshToken"]) {
+        assert.equal(adminOfficerDetails.body.data[secret], undefined);
+        assert.equal(adminOfficerDetails.body.data.userId[secret], undefined);
+    }
 
     const adminAssignable = await request(app)
         .get("/api/officers/assignable")
@@ -282,7 +315,7 @@ test("system admin handles approval and account status, not police profile edits
     assert.equal(adminVerifyEvidence.status, 403);
 });
 
-test("senior profile updates cannot change rank, credentials, account status, or role", async () => {
+test("higher-ranking officers cannot update profile, rank, credentials, account status, or role", async () => {
     const target = officers.si;
     const before = await Officer.findById(target._id).lean();
     const userBefore = await User.findById(users.si._id).lean();
@@ -313,9 +346,31 @@ test("senior profile updates cannot change rank, credentials, account status, or
         .send({ rank: "constable", officerRank: "constable", systemRole: "system_admin" });
     assert.equal(clientRankSpoof.status, 403);
     assert.equal((await Officer.findById(officers.sp._id)).rank, "sp");
+
+    const originalTarget = await Officer.findById(officers.constable._id).lean();
+    const originalUser = await User.findById(users.constable._id).lean();
+    const deniedAdminActions = await Promise.all([
+        request(app).patch(`/api/officers/${officers.constable._id}/station`)
+            .set("Authorization", `Bearer ${tokens.inspector}`).send({ stationId: String(station._id) }),
+        request(app).patch(`/api/officers/${officers.constable._id}/approve`)
+            .set("Authorization", `Bearer ${tokens.inspector}`),
+        request(app).patch(`/api/officers/${officers.constable._id}/reject`)
+            .set("Authorization", `Bearer ${tokens.inspector}`),
+        request(app).patch(`/api/officers/${officers.constable._id}/deactivate`)
+            .set("Authorization", `Bearer ${tokens.inspector}`),
+        request(app).delete(`/api/officers/${officers.constable._id}`)
+            .set("Authorization", `Bearer ${tokens.inspector}`),
+    ]);
+    assert.ok(deniedAdminActions.every((response) => response.status === 403));
+    const unchangedTarget = await Officer.findById(officers.constable._id).lean();
+    const unchangedUser = await User.findById(users.constable._id).lean();
+    assert.equal(unchangedTarget.stationId.toString(), originalTarget.stationId.toString());
+    assert.equal(unchangedTarget.status, originalTarget.status);
+    assert.equal(unchangedUser.status, originalUser.status);
+    assert.equal(unchangedUser.isActive, originalUser.isActive);
 });
 
-test("account status changes follow subordinate rank and update only status fields", async () => {
+test("only system administrators can change account status and only status fields are updated", async () => {
     // This existing-style legacy value is outside the canonical schema enum.
     // Status updates must still succeed without validating or rewriting rank.
     await Officer.collection.updateOne(
@@ -373,46 +428,18 @@ test("account status changes follow subordinate rank and update only status fiel
         assert.equal((await Officer.findById(officers[rank]._id)).rank, before.rank);
     }
 
-    for (const managerRank of ["sp", "dsp", "inspector", "si"]) {
-        const managerIndex = rankHierarchy.indexOf(managerRank);
-        for (let targetIndex = managerIndex + 1; targetIndex < rankHierarchy.length; targetIndex += 1) {
-            const targetRank = rankHierarchy[targetIndex];
-            const originalRank = (await Officer.findById(officers[targetRank]._id)).rank;
-            const deactivate = await request(app)
-                .patch(`/api/officers/${officers[targetRank]._id}/status`)
-                .set("Authorization", `Bearer ${tokens[managerRank]}`)
-                .send({ accountStatus: "inactive", rank: "sp" });
-            assert.equal(deactivate.status, 200, `${managerRank} -> ${targetRank} deactivate`);
-            assert.equal((await User.findById(users[targetRank]._id)).isActive, false);
-            assert.equal((await Officer.findById(officers[targetRank]._id)).rank, originalRank);
-
-            const activate = await request(app)
-                .patch(`/api/officers/${officers[targetRank]._id}/status`)
-                .set("Authorization", `Bearer ${tokens[managerRank]}`)
-                .send({ accountStatus: "active", rank: "constable" });
-            assert.equal(activate.status, 200, `${managerRank} -> ${targetRank} activate`);
-            assert.equal((await User.findById(users[targetRank]._id)).isActive, true);
-            assert.equal((await Officer.findById(officers[targetRank]._id)).rank, originalRank);
-        }
-
-        for (let targetIndex = 0; targetIndex <= managerIndex; targetIndex += 1) {
-            const targetRank = rankHierarchy[targetIndex];
-            const before = await Officer.findById(officers[targetRank]._id).lean();
+    for (const managerRank of rankHierarchy) {
+        for (const targetRank of rankHierarchy) {
+            const beforeOfficer = await Officer.findById(officers[targetRank]._id).lean();
+            const beforeUser = await User.findById(users[targetRank]._id).lean();
             const denied = await request(app)
                 .patch(`/api/officers/${officers[targetRank]._id}/status`)
                 .set("Authorization", `Bearer ${tokens[managerRank]}`)
                 .send({ accountStatus: "inactive", rank: "constable" });
             assert.equal(denied.status, 403, `${managerRank} cannot change ${targetRank}`);
-            assert.equal((await Officer.findById(officers[targetRank]._id)).status, before.status);
+            assert.equal((await Officer.findById(officers[targetRank]._id)).status, beforeOfficer.status);
+            assert.equal((await User.findById(users[targetRank]._id)).isActive, beforeUser.isActive);
         }
-    }
-
-    for (const managerRank of ["asi", "head_constable", "constable"]) {
-        const denied = await request(app)
-            .patch(`/api/officers/${officers.constable._id}/status`)
-            .set("Authorization", `Bearer ${tokens[managerRank]}`)
-            .send({ accountStatus: "inactive" });
-        assert.equal(denied.status, 403, managerRank);
     }
 
     const deactivateSI = await request(app)

@@ -232,7 +232,7 @@ function OfficerManagement() {
             <table className="table table-hover align-middle mb-0">
               <thead>
                 <tr>
-                  {systemAdmin ? <th>Account</th> : <><th>Officer</th><th>Username</th><th>Batch No.</th></>}
+                  {systemAdmin ? <><th>Officer</th><th>Account</th></> : <><th>Officer</th><th>Username</th><th>Batch No.</th></>}
                   <th>Police station</th>
                   <th>Approval</th>
                   <th>Account Status</th>
@@ -250,17 +250,18 @@ function OfficerManagement() {
 
                   return (
                     <tr key={officer._id}>
-                      {systemAdmin ? <td><div className="fw-semibold">{officer.username || 'Account'}</div><small className="text-secondary">{officer.email || 'Email unavailable'}</small></td> : <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small></td><td>{officer.userId?.username || 'Not available'}</td><td><div>{officer.badgeNumber || '—'}</div><small className="text-secondary">ID: {officer.officerId || '—'}</small></td></>}
+                      {systemAdmin ? <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small><small className="text-secondary d-block">ID: {officer.officerId || '—'} · Batch: {officer.badgeNumber || '—'}</small></td><td><div className="fw-semibold">{officer.username || 'Account'}</div><small className="text-secondary">{officer.email || 'Email unavailable'}</small></td></> : <><td><div className="fw-semibold">{officer.name || 'Unnamed officer'}</div><small className="text-secondary">{officer.rank || 'Rank not available'} · {officer.department || 'Department not available'}</small></td><td>{officer.userId?.username || 'Not available'}</td><td><div>{officer.badgeNumber || '—'}</div><small className="text-secondary">ID: {officer.officerId || '—'}</small></td></>}
                       <td><div>{stationName || 'No station selected'}</div>{systemAdmin && <small className="text-secondary d-block">{officer.stationAssignmentStatus}</small>}{!systemAdmin && !officer.stationId && <small className="text-secondary">Unverified legacy station</small>}{systemAdmin && officer.stationAssignmentStatus !== 'Assigned' && <div className="d-flex gap-1 mt-1"><select aria-label={`Correct station for ${officer.username || 'officer'}`} className="form-select form-select-sm" onChange={(event) => setStationChoices((current) => ({ ...current, [officer._id]: event.target.value }))} value={stationChoices[officer._id] || ''}><option value="">Select active station</option>{stations.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}</select><button className="btn btn-sm btn-outline-primary" disabled={isActionBusy || !stationChoices[officer._id]} onClick={() => handleStationAssignment(officer)} type="button">Correct</button></div>}</td>
                       <td><span className={getBadgeClass(approvalStatus)}>{approvalStatus}</span></td>
                       <td><span className={getBadgeClass(accountStatus)}>{accountStatus}</span></td>
                       <td>
                         <div className="action-stack">
-                          {!systemAdmin && <><button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/officers/${officer._id}`)} type="button">View</button><button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Update</button></>}
-                          {approvalStatus === 'approved' && <button className="btn btn-sm btn-outline-warning" disabled={isActionBusy} onClick={() => handleStatusToggle(officer)} type="button">
+                          <button className="btn btn-sm btn-outline-primary" onClick={() => navigate(`/officers/${officer._id}`)} type="button">View</button>
+                          {systemAdmin && <button className="btn btn-sm btn-outline-secondary" onClick={() => navigate(`/officers/${officer._id}/edit`)} type="button">Edit</button>}
+                          {systemAdmin && approvalStatus === 'approved' && <button className="btn btn-sm btn-outline-warning" disabled={isActionBusy} onClick={() => handleStatusToggle(officer)} type="button">
                             {isActionBusy ? 'Working...' : accountStatus === 'active' ? 'Deactivate' : 'Activate'}
                           </button>}
-                          {approvalStatus === 'pending' && (
+                          {systemAdmin && approvalStatus === 'pending' && (
                             <>
                               <button className="btn btn-sm btn-success" disabled={isActionBusy} onClick={() => handleReview(officer, 'approve')} type="button">Approve</button>
                               <button className="btn btn-sm btn-outline-danger" disabled={isActionBusy} onClick={() => handleReview(officer, 'reject')} type="button">Reject</button>

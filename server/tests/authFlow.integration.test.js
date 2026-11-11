@@ -161,6 +161,29 @@ test("/auth/me rechecks current eligibility for officers and preserves system-ad
     assert.equal(eligibleMe.status, 200);
     assert.equal(eligibleMe.body.data.systemRole, "officer");
     assert.equal(eligibleMe.body.data.status, "approved");
+    assert.equal(eligibleMe.body.data.name, "Flow Officer");
+    assert.equal(eligibleMe.body.data.officerId, "MEE-OFF-001");
+    assert.equal(eligibleMe.body.data.badgeNumber, "MEE001");
+    assert.equal(eligibleMe.body.data.phoneNumber, "5550101010");
+    assert.equal(eligibleMe.body.data.department, "Criminal Investigation");
+    assert.equal(eligibleMe.body.data.assignedStation, station.name);
+    assert.equal(eligibleMe.body.data.employmentStatus, "active");
+    assert.ok(eligibleMe.body.data.joiningDate);
+    assert.ok(eligibleMe.body.data.createdAt);
+    for (const secretField of ["password", "passwordHash", "token", "refreshToken", "passwordResetToken", "passwordResetExpires"]) {
+        assert.equal(eligibleMe.body[secretField], undefined);
+        assert.equal(eligibleMe.body.data[secretField], undefined);
+    }
+
+    const identityOverride = await request(app)
+        .get("/api/auth/me")
+        .query({ userId: "another-user", id: "another-user" })
+        .set("Authorization", `Bearer ${eligible.token}`);
+    assert.equal(identityOverride.status, 200);
+    assert.equal(String(identityOverride.body.data.id), String(eligible.userId));
+
+    const unauthenticated = await request(app).get("/api/auth/me");
+    assert.equal(unauthenticated.status, 401);
 
     const deactivated = await request(app)
         .patch(`/api/officers/${eligible.officerId}/status`)
@@ -193,6 +216,36 @@ test("/auth/me rechecks current eligibility for officers and preserves system-ad
         .set("Authorization", `Bearer ${adminToken}`);
     assert.equal(adminMe.status, 200);
     assert.equal(adminMe.body.data.systemRole, "system_admin");
+    assert.equal(adminMe.body.data.role, "admin");
+    assert.ok(adminMe.body.data.username);
+    assert.ok(adminMe.body.data.createdAt);
+    assert.equal(adminMe.body.data.officerId, null);
+    assert.equal(adminMe.body.data.passwordHash, undefined);
+
+    const identityOverrideForAdmin = await request(app)
+        .get("/api/auth/me")
+        .query({ userId: eligible.userId })
+        .set("Authorization", `Bearer ${adminToken}`);
+    assert.equal(identityOverrideForAdmin.status, 200);
+    assert.equal(identityOverrideForAdmin.body.data.systemRole, "system_admin");
+
+    const deletedUser = await User.create({
+        username: "me-deleted-user",
+        email: "me-deleted-user@crms.test",
+        passwordHash: await bcrypt.hash("DeletedUser@123", 10),
+        role: "system_admin",
+        status: "approved",
+        isActive: true,
+    });
+    const deletedUserLogin = await login("me-deleted-user", "DeletedUser@123");
+    assert.equal(deletedUserLogin.status, 200);
+    await User.deleteOne({ _id: deletedUser._id });
+    const deletedUserProfile = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${deletedUserLogin.body.token}`);
+    assert.equal(deletedUserProfile.status, 401);
+    assert.equal(deletedUserProfile.body.error, "USER_NOT_FOUND");
+    assert.equal(deletedUserProfile.body.data, undefined);
 });
 
 test("registered officers stay locked out until an admin approves them, then gain operational access", async () => {
