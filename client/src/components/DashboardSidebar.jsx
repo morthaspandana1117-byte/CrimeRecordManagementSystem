@@ -67,7 +67,14 @@ function DashboardSidebar({ title }) {
         </nav>
         <div className="sidebar-footer">
           <span className="sidebar-page-label">{title}</span>
-          <button className="sidebar-logout" onClick={handleLogout} type="button"><span aria-hidden="true">↪</span> Log out</button>
+          <button className="sidebar-link sidebar-logout" onClick={handleLogout} type="button">
+            <span className="sidebar-icon" aria-hidden="true">
+              <svg aria-hidden="true" fill="none" height="20" viewBox="0 0 24 24" width="20">
+                <path d="M10 17l5-5-5-5M15 12H3m9-7h6a2 2 0 012 2v10a2 2 0 01-2 2h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
+              </svg>
+            </span>
+            <span>Log out</span>
+          </button>
           <NavLink className="sidebar-link" onClick={() => setOpen(false)} to="/profile">
             <span className="sidebar-icon" aria-hidden="true">♙</span>
             <span>Profile</span>

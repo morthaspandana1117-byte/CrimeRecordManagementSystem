@@ -40,6 +40,12 @@ a:hover { color: var(--color-primary-hover); }
 .eyebrow, .header-kicker { color: var(--color-secondary); font-size: .76rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .login-panel h1, .welcome-card h2, .section-title { color: var(--color-primary); font-weight: 750; letter-spacing: -.035em; }
 .form-label { color: var(--color-text); font-weight: 650; }
+.password-input-wrap { position: relative; }
+.password-input-wrap .form-control { padding-right: 3.25rem; }
+.password-visibility-toggle { align-items: center; background: transparent; border: 0; border-radius: .35rem; color: var(--color-muted); cursor: pointer; display: inline-flex; height: 2.5rem; justify-content: center; padding: .4rem; position: absolute; right: .45rem; top: 50%; transform: translateY(-50%); width: 2.5rem; }
+.password-visibility-toggle:hover { color: var(--color-primary); }
+.password-visibility-toggle:focus-visible { outline: .18rem solid var(--color-accent); outline-offset: .05rem; }
+.password-visibility-toggle:disabled { cursor: not-allowed; }
 .form-control, .form-select { background-color: var(--color-surface); border-color: var(--color-border); border-radius: var(--radius-control); color: var(--color-text); }
 .form-control:focus, .form-select:focus { background-color: var(--color-surface); border-color: var(--color-focus); box-shadow: 0 0 0 .2rem rgba(184, 155, 112, .28); color: var(--color-text); }
 .form-control::placeholder { color: var(--color-muted); }
@@ -143,8 +149,9 @@ a:hover { color: var(--color-primary-hover); }
 .sidebar-icon { align-items: center; color: #F7F1E7; display: inline-flex; font-size: 1.1rem; height: 1.3rem; justify-content: center; width: 1.3rem; }
 .sidebar-footer { border-top: 1px solid rgba(255,255,255,.16); margin-top: auto; padding: 1rem .5rem 0; }
 .sidebar-page-label { color: #E8DDCB; display: block; font-size: .72rem; margin-bottom: .7rem; }
-.sidebar-logout { background: transparent; border: 0; color: #fff; padding: .4rem 0; }
-.sidebar-logout:hover { color: var(--color-accent); }
+.sidebar-logout { background: transparent; border: 0; color: #fff; cursor: pointer; font-size: inherit; text-align: left; width: 100%; }
+.sidebar-logout:hover { background: rgba(255,255,255,.1); color: #fff; }
+.sidebar-logout:focus-visible { outline: .18rem solid var(--color-accent); outline-offset: .1rem; }
 .sidebar-close, .sidebar-toggle, .sidebar-scrim { display: none; }
 .dashboard-main { flex: 1; min-width: 0; }
 .dashboard-main .dashboard-header { position: sticky; top: 0; z-index: 1000; }
