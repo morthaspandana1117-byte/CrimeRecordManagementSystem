@@ -184,7 +184,7 @@ test.after(async () => {
     if (mongoServer) await mongoServer.stop();
 });
 
-test("FIR coordinates are optional, paired, and validated on create and update", async () => {
+test("FIR coordinates are optional, paired, and validated on create; registered coordinates are immutable", async () => {
     const edgeCoordinates = await request(app)
         .post("/api/firs")
         .set(auth("a"))
@@ -212,15 +212,19 @@ test("FIR coordinates are optional, paired, and validated on create and update",
         .put(`/api/firs/${edgeCoordinates.body.data._id}`)
         .set(auth("a"))
         .send({ latitude: 91, longitude: 181 });
-    assert.equal(updateInvalid.status, 400);
+    assert.equal(updateInvalid.status, 405);
+    assert.equal(updateInvalid.body.error, "FIR_IMMUTABLE");
 
     const clearCoordinates = await request(app)
         .put(`/api/firs/${edgeCoordinates.body.data._id}`)
         .set(auth("a"))
         .send({ latitude: null, longitude: null });
-    assert.equal(clearCoordinates.status, 200);
-    assert.equal(clearCoordinates.body.data.latitude, null);
-    assert.equal(clearCoordinates.body.data.longitude, null);
+    assert.equal(clearCoordinates.status, 405);
+    assert.equal(clearCoordinates.body.error, "FIR_IMMUTABLE");
+    const unchanged = await FIR.findById(edgeCoordinates.body.data._id);
+    assert.equal(unchanged.latitude, -90);
+    assert.equal(unchanged.longitude, 180);
+    await FIR.deleteOne({ _id: edgeCoordinates.body.data._id });
 });
 
 test("map API shares station markers across ranks without granting FIR, case, or evidence access", async () => {
@@ -231,9 +235,9 @@ test("map API shares station markers across ranks without granting FIR, case, or
 
     const ownRecords = await request(app).get("/api/firs/map").set(auth("a"));
     assert.equal(ownRecords.status, 200);
-    assert.equal(ownRecords.body.data.totalRecords, 4);
+    assert.equal(ownRecords.body.data.totalRecords, 3);
     assert.equal(ownRecords.body.data.mappedRecords, 2);
-    assert.equal(ownRecords.body.data.unmappedRecords, 2);
+    assert.equal(ownRecords.body.data.unmappedRecords, 1);
     assert.equal(
         ownRecords.body.data.mappedRecords + ownRecords.body.data.unmappedRecords,
         ownRecords.body.data.totalRecords,
@@ -259,7 +263,7 @@ test("map API shares station markers across ranks without granting FIR, case, or
     ]) {
         const filtered = await request(app).get(`/api/firs/map?${query}`).set(auth("a"));
         assert.equal(filtered.status, 200, query);
-        assert.equal(filtered.body.data.totalRecords, 4, query);
+        assert.equal(filtered.body.data.totalRecords, 3, query);
         assert.equal(filtered.body.data.mappedRecords, 2, query);
     }
 

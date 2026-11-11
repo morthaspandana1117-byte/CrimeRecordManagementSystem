@@ -114,7 +114,6 @@ function FIRDetails() {
           </div>
           <div className="d-flex flex-wrap gap-2">
             <button className="btn btn-outline-light" onClick={() => navigate('/firs')} type="button">Back to FIR list</button>
-            <button className="btn btn-primary" onClick={() => navigate(`/firs/${fir._id}/edit`)} type="button">Edit FIR</button>
           </div>
         </div>
       </header>

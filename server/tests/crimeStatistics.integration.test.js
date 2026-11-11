@@ -327,7 +327,7 @@ test("date-only filters include complete boundary days and exclude records outsi
     ]);
 });
 
-test("statistics reconcile with source records after FIR create, update, and deletion", async () => {
+test("statistics reconcile with source records after FIR create and deletion while FIR details remain immutable", async () => {
     const expectedSnapshot = async () => {
         const firs = await FIR.find({ registeredBy: officerA._id }).lean();
         const firIds = firs.map(({ _id }) => _id);
@@ -445,9 +445,11 @@ test("statistics reconcile with source records after FIR create, update, and del
         .put(`/api/firs/${created.body.data._id}`)
         .set("Authorization", `Bearer ${officerAToken}`)
         .send({ date: "2026-03-02", crimeType: "Fraud", status: "Closed" });
-    assert.equal(updated.status, 200);
+    assert.equal(updated.status, 405);
+    assert.equal(updated.body.error, "FIR_IMMUTABLE");
     const afterUpdate = await assertMatchesSource();
-    assert.equal(afterUpdate.crimeTypeStats.find(({ crimeType }) => crimeType === "Fraud").count, 2);
+    assert.deepEqual(afterUpdate.crimeTypeStats, afterLink.crimeTypeStats);
+    assert.deepEqual(afterUpdate.statusStats, afterLink.statusStats);
 
     await Case.deleteOne({ _id: linkedCase._id });
     await FIR.deleteOne({ _id: created.body.data._id });

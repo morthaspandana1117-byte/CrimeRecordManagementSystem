@@ -17,6 +17,6 @@ router.patch("/:id/status", controller.updateFIRStatus);
 router
     .route("/:id")
     .get(controller.getFIRById)
-    .put(controller.updateFIR);
+    .put(controller.rejectFIRUpdate);
 
 module.exports = router;
