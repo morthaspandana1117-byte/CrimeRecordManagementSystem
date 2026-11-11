@@ -4,12 +4,13 @@ import { useAuth } from '../context/useAuth'
 import { getDashboardStats } from '../services/api'
 import { canManageOfficers, isSeniorOfficer } from '../authority'
 import DashboardSidebar from '../components/DashboardSidebar'
+import Icon from '../components/Icon'
 
 const statCards = [
-  { key: 'totalFIRs', label: 'FIRs', icon: 'FI' },
-  { key: 'totalCases', label: 'Cases', icon: 'CA' },
-  { key: 'totalEvidence', label: 'Evidence Items', icon: 'EV' },
-  { key: 'totalReports', label: 'Reports', icon: 'RP' },
+  { key: 'totalFIRs', label: 'FIRs', icon: 'file' },
+  { key: 'totalCases', label: 'Cases', icon: 'cases' },
+  { key: 'totalEvidence', label: 'Evidence Items', icon: 'shield' },
+  { key: 'totalReports', label: 'Reports', icon: 'chart' },
 ]
 
 const getDashboardError = (error) => {
@@ -74,7 +75,7 @@ function Dashboard() {
         {!loading && error && <div className="dashboard-state"><div className="alert alert-danger mb-3" role="alert">{error}</div><button className="btn btn-primary" onClick={loadStats} type="button">Try again</button></div>}
         {!loading && !error && stats && <>
           {allCountsAreZero && <div className="alert alert-info">No records have been added to the system yet. The totals will update when records become available.</div>}
-          <div className="row g-3 g-md-4">{statCards.map(({ key, label, icon }) => <div className="col-12 col-sm-6 col-lg-4 col-xl-3" key={key}><article className="stat-card h-100"><span className="stat-icon" aria-hidden="true">{icon}</span><p className="stat-label">{label}</p><p className="stat-value">{Number(stats[key] || 0).toLocaleString()}</p></article></div>)}</div>
+          <div className="row g-3 g-md-4">{statCards.map(({ key, label, icon }) => <div className="col-12 col-sm-6 col-lg-4 col-xl-3" key={key}><article className="stat-card h-100"><span className="stat-icon"><Icon name={icon} size={21} /></span><p className="stat-label">{label}</p><p className="stat-value">{Number(stats[key] || 0).toLocaleString()}</p></article></div>)}</div>
         </>}
       </main></div>
     </div>

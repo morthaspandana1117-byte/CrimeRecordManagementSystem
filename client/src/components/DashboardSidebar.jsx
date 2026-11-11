@@ -2,22 +2,23 @@ import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { canManageOfficers } from '../authority'
+import Icon from './Icon'
 
 const officerItems = [
-  { to: '/dashboard', label: 'Dashboard', icon: '▦', end: true },
-  { to: '/cases', label: 'Cases', icon: '▤' },
-  { to: '/firs', label: 'FIR Records', icon: '▥' },
-  { to: '/crime-map', label: 'Crime Map', icon: '⌖' },
-  { to: '/criminals', label: 'Criminal Records', icon: '◈' },
-  { to: '/reports', label: 'Reports', icon: '▧' },
-  { to: '/search', label: 'Advanced Search', icon: '⌕' },
+  { to: '/dashboard', label: 'Dashboard', icon: 'dashboard', end: true },
+  { to: '/cases', label: 'Cases', icon: 'cases' },
+  { to: '/firs', label: 'FIR Records', icon: 'file' },
+  { to: '/crime-map', label: 'Crime Map', icon: 'map' },
+  { to: '/criminals', label: 'Criminal Records', icon: 'person' },
+  { to: '/reports', label: 'Reports', icon: 'chart' },
+  { to: '/search', label: 'Advanced Search', icon: 'search' },
 ]
 
 const adminItems = [
-  { to: '/admin/police-stations', label: 'Police Stations', icon: 'PS' },
-  { to: '/admin/dashboard', label: 'Dashboard', icon: '▦', end: true },
-  { to: '/officers', label: 'Officer Management', icon: '♙' },
-  { to: '/admin/audit-logs', label: 'Audit Logs', icon: '▤' },
+  { to: '/admin/police-stations', label: 'Police Stations', icon: 'building' },
+  { to: '/admin/dashboard', label: 'Dashboard', icon: 'dashboard', end: true },
+  { to: '/officers', label: 'Officer Management', icon: 'users' },
+  { to: '/admin/audit-logs', label: 'Audit Logs', icon: 'history' },
 ]
 
 function DashboardSidebar({ title }) {
@@ -28,7 +29,7 @@ function DashboardSidebar({ title }) {
   const items = isAdmin
     ? adminItems
     : canManageOfficers(user)
-      ? [...officerItems, { to: '/officers', label: 'Manage Officers', icon: '♙' }]
+      ? [...officerItems, { to: '/officers', label: 'Manage Officers', icon: 'users' }]
       : officerItems
 
   const handleLogout = () => {
@@ -39,14 +40,14 @@ function DashboardSidebar({ title }) {
   return (
     <>
       <button className="sidebar-toggle" aria-controls="dashboard-sidebar" aria-expanded={open} aria-label="Open main menu" onClick={() => setOpen(true)} type="button">
-        <span aria-hidden="true">☰</span>
+        <Icon name="menu" size={21} />
       </button>
       {open && <button className="sidebar-scrim" aria-label="Close main menu" onClick={() => setOpen(false)} type="button" />}
       <aside className={`dashboard-sidebar${open ? ' dashboard-sidebar-open' : ''}`} id="dashboard-sidebar">
         <div className="sidebar-brand">
-          <div className="sidebar-shield" aria-hidden="true">CR</div>
+          <div className="sidebar-shield"><Icon name="shield" size={21} /></div>
           <div><strong>CRMS</strong><span>Crime Records</span></div>
-          <button className="sidebar-close" aria-label="Close main menu" onClick={() => setOpen(false)} type="button">×</button>
+          <button className="sidebar-close" aria-label="Close main menu" onClick={() => setOpen(false)} type="button"><Icon name="close" size={20} /></button>
         </div>
         <div className="sidebar-profile">
           <div className="sidebar-avatar" aria-hidden="true">{(user?.name || user?.username || 'O').charAt(0).toUpperCase()}</div>
@@ -58,7 +59,7 @@ function DashboardSidebar({ title }) {
             {items.map((item) => (
               <li key={item.to}>
                 <NavLink className="sidebar-link" end={item.end} onClick={() => setOpen(false)} to={item.to}>
-                  <span className="sidebar-icon" aria-hidden="true">{item.icon}</span>
+                  <span className="sidebar-icon"><Icon name={item.icon} size={18} /></span>
                   <span>{item.label}</span>
                 </NavLink>
               </li>
@@ -69,14 +70,12 @@ function DashboardSidebar({ title }) {
           <span className="sidebar-page-label">{title}</span>
           <button className="sidebar-link sidebar-logout" onClick={handleLogout} type="button">
             <span className="sidebar-icon" aria-hidden="true">
-              <svg aria-hidden="true" fill="none" height="20" viewBox="0 0 24 24" width="20">
-                <path d="M10 17l5-5-5-5M15 12H3m9-7h6a2 2 0 012 2v10a2 2 0 01-2 2h-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
-              </svg>
+              <Icon name="logout" size={18} />
             </span>
             <span>Log out</span>
           </button>
           <NavLink className="sidebar-link" onClick={() => setOpen(false)} to="/profile">
-            <span className="sidebar-icon" aria-hidden="true">♙</span>
+            <span className="sidebar-icon"><Icon name="user-circle" size={18} /></span>
             <span>Profile</span>
           </NavLink>
         </div>

@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { getActivePoliceStations, registerOfficer } from '../services/api'
 import { officerRankOptions, officerRanks } from '../authority'
+import Icon from '../components/Icon'
 
 const ranks = officerRanks
 const departments = ['Cyber Crime', 'Criminal Investigation', 'Traffic', 'Law and Order']
@@ -73,19 +74,29 @@ function Register() {
     }
   }
 
-  return <main className="login-page"><section className="login-panel register-panel" aria-labelledby="register-title">
+  return <main className="login-page login-page-register"><section className="login-panel register-panel" aria-labelledby="register-title">
     <div className="brand-mark" aria-hidden="true">CR</div><p className="eyebrow">Officer registration</p><h1 id="register-title">Request an officer account</h1>
     <p className="text-secondary mb-4">All officer registrations are reviewed by an administrator before sign-in is enabled.</p>
     {stationError && <div className="alert alert-danger" role="alert">{stationError}</div>}
     {error && <div className="alert alert-danger" role="alert">{error}</div>}{notice && <div className="alert alert-success" role="status">{notice}</div>}
-    <form onSubmit={submit} noValidate><div className="row g-3">
-      <Field label="Username" name="username" onChange={update} value={form.username} /><Field label="Email" name="email" onChange={update} type="email" value={form.email} />
-      <Field help="Exactly 6 letters or numbers." label="Batch number" name="batchNumber" onChange={update} value={form.batchNumber} /><Field label="Full name" name="name" onChange={update} value={form.name} />
-      <Field label="Officer ID" name="officerId" onChange={update} value={form.officerId} />
-      <Select label="Rank" name="rank" onChange={update} options={officerRankOptions} value={form.rank} /><Select label="Department" name="department" onChange={update} options={departments} value={form.department} />
-      <div className="col-12 col-md-6"><label className="form-label" htmlFor="stationId">Assigned police station</label><select className="form-select" disabled={loadingStations || Boolean(stationError) || stations.length === 0} id="stationId" name="stationId" onChange={update} required value={form.stationId}><option value="">{loadingStations ? 'Loading active police stations...' : 'Select an active police station'}</option>{stations.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}</select>{loadingStations && <div className="form-text" role="status">Loading active police stations...</div>}{!loadingStations && !stationError && stations.length === 0 && <div className="form-text">No active police stations are available. Contact a system administrator.</div>}<div className="form-text">Your selected station is saved with your registration. An administrator reviews your account before sign-in is enabled.</div></div><Field label="Phone number" name="phoneNumber" onChange={update} value={form.phoneNumber} />
-      <Field label="Joining date" name="joiningDate" onChange={update} type="date" value={form.joiningDate} /><div className="col-12"><label className="form-label" htmlFor="address">Address</label><textarea className="form-control" id="address" name="address" onChange={update} required rows="2" value={form.address} /></div>
-    </div><button className="btn btn-primary btn-lg w-100 mt-4" disabled={submitting || Boolean(notice) || loadingStations || Boolean(stationError) || stations.length === 0 || !form.stationId} type="submit">{submitting ? 'Submitting...' : 'Submit registration'}</button></form>
+    <form onSubmit={submit} noValidate>
+      <section className="registration-group" aria-labelledby="account-information-title">
+        <div className="registration-group-heading"><span className="registration-group-icon"><Icon name="user-circle" size={19} /></span><h2 id="account-information-title">Account Information</h2></div>
+        <div className="row g-3"><Field label="Username" name="username" onChange={update} value={form.username} /><Field label="Email" name="email" onChange={update} type="email" value={form.email} /><Field help="Exactly 6 letters or numbers." label="Batch number" name="batchNumber" onChange={update} value={form.batchNumber} /></div>
+      </section>
+      <section className="registration-group" aria-labelledby="officer-information-title">
+        <div className="registration-group-heading"><span className="registration-group-icon"><Icon name="shield" size={19} /></span><h2 id="officer-information-title">Officer Information</h2></div>
+        <div className="row g-3"><Field label="Full name" name="name" onChange={update} value={form.name} /><Field label="Officer ID" name="officerId" onChange={update} value={form.officerId} /><Select label="Rank" name="rank" onChange={update} options={officerRankOptions} value={form.rank} /><Select label="Department" name="department" onChange={update} options={departments} value={form.department} /></div>
+      </section>
+      <section className="registration-group" aria-labelledby="station-contact-title">
+        <div className="registration-group-heading"><span className="registration-group-icon"><Icon name="building" size={19} /></span><h2 id="station-contact-title">Station and Contact Information</h2></div>
+        <div className="row g-3">
+          <div className="col-12 col-md-6"><label className="form-label" htmlFor="stationId">Assigned police station</label><select className="form-select" disabled={loadingStations || Boolean(stationError) || stations.length === 0} id="stationId" name="stationId" onChange={update} required value={form.stationId}><option value="">{loadingStations ? 'Loading active police stations...' : 'Select an active police station'}</option>{stations.map((station) => <option key={station._id} value={station._id}>{station.name}</option>)}</select>{loadingStations && <div className="form-text" role="status">Loading active police stations...</div>}{!loadingStations && !stationError && stations.length === 0 && <div className="form-text">No active police stations are available. Contact a system administrator.</div>}<div className="form-text">Your selected station is saved with your registration. An administrator reviews your account before sign-in is enabled.</div></div>
+          <Field label="Phone number" name="phoneNumber" onChange={update} value={form.phoneNumber} /><Field label="Joining date" name="joiningDate" onChange={update} type="date" value={form.joiningDate} /><div className="col-12"><label className="form-label" htmlFor="address">Address</label><textarea className="form-control" id="address" name="address" onChange={update} required rows="2" value={form.address} /></div>
+        </div>
+      </section>
+      <button className="btn btn-primary btn-lg w-100 mt-4" disabled={submitting || Boolean(notice) || loadingStations || Boolean(stationError) || stations.length === 0 || !form.stationId} type="submit">{submitting ? 'Submitting...' : 'Submit registration'}</button>
+    </form>
     <p className="mb-0 mt-4 text-center text-secondary">Already have an account? <Link to="/login">Sign in</Link></p>
   </section></main>
 }

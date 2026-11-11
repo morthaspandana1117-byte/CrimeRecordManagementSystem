@@ -3,15 +3,16 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/useAuth'
 import { getAdminDashboardStats } from '../services/api'
 import DashboardSidebar from '../components/DashboardSidebar'
+import Icon from '../components/Icon'
 
 const statCards = [
-  { key: 'totalUsers', label: 'System Users', icon: 'US' },
-  { key: 'totalOfficers', label: 'Officers', icon: 'OF' },
-  { key: 'pendingOfficers', label: 'Pending Registrations', icon: 'PD' },
-  { key: 'totalFIRs', label: 'FIRs', icon: 'FI' },
-  { key: 'totalCases', label: 'Cases', icon: 'CA' },
-  { key: 'totalEvidence', label: 'Evidence Items', icon: 'EV' },
-  { key: 'totalReports', label: 'Reports', icon: 'RP' },
+  { key: 'totalUsers', label: 'System Users', icon: 'users' },
+  { key: 'totalOfficers', label: 'Officers', icon: 'person' },
+  { key: 'pendingOfficers', label: 'Pending Registrations', icon: 'history' },
+  { key: 'totalFIRs', label: 'FIRs', icon: 'file' },
+  { key: 'totalCases', label: 'Cases', icon: 'cases' },
+  { key: 'totalEvidence', label: 'Evidence Items', icon: 'shield' },
+  { key: 'totalReports', label: 'Reports', icon: 'chart' },
 ]
 
 function AdminDashboard() {
@@ -49,7 +50,7 @@ function AdminDashboard() {
         <div className="d-flex align-items-end justify-content-between gap-3 mb-3"><div><p className="eyebrow mb-1">System overview</p><h2 className="section-title mb-0">Record statistics</h2></div><button className="btn btn-outline-primary" disabled={loading} onClick={loadStats} type="button">Refresh</button></div>
         {loading && <div className="dashboard-state" role="status"><div className="spinner-border text-primary" /><p className="mb-0">Loading dashboard statistics...</p></div>}
         {!loading && error && <div className="alert alert-danger" role="alert">{error}</div>}
-        {!loading && !error && stats && <div className="row g-3 g-md-4">{statCards.map(({ key, label, icon }) => <div className="col-12 col-sm-6 col-lg-4 col-xl-3" key={key}><article className="stat-card h-100"><span className="stat-icon" aria-hidden="true">{icon}</span><p className="stat-label">{label}</p><p className="stat-value">{Number(stats[key] || 0).toLocaleString()}</p></article></div>)}</div>}
+        {!loading && !error && stats && <div className="row g-3 g-md-4">{statCards.map(({ key, label, icon }) => <div className="col-12 col-sm-6 col-lg-4 col-xl-3" key={key}><article className="stat-card h-100"><span className="stat-icon"><Icon name={icon} size={21} /></span><p className="stat-label">{label}</p><p className="stat-value">{Number(stats[key] || 0).toLocaleString()}</p></article></div>)}</div>}
       </main></div>
     </div>
   )

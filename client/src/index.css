@@ -24,6 +24,13 @@
   --radius-card: .9rem;
   --radius-control: .55rem;
   --space-section: 1.5rem;
+  --bs-primary: #59432D;
+  --bs-primary-rgb: 89, 67, 45;
+  --bs-body-color: #2D2924;
+  --bs-body-bg: #F4F0E8;
+  --bs-border-color: #D8CFC1;
+  --bs-link-color: #59432D;
+  --bs-link-hover-color: #806B52;
 }
 
 * { box-sizing: border-box; }
@@ -32,9 +39,20 @@ button, input, select, textarea { font: inherit; }
 a { color: var(--color-primary); }
 a:hover { color: var(--color-primary-hover); }
 
-.login-page { align-items: center; background: linear-gradient(135deg, var(--color-primary), #3E2F20); display: flex; justify-content: center; min-height: 100vh; padding: 1.5rem; }
-.login-panel { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-elevated); max-width: 31rem; padding: 2.5rem; width: 100%; }
-.register-panel { max-width: 48rem; }
+.login-page { align-items: center; display: flex; isolation: isolate; justify-content: center; min-height: 100vh; min-height: 100svh; overflow-x: hidden; padding: clamp(1.25rem, 4vw, 4rem); position: relative; }
+.login-page::before { background: linear-gradient(rgba(45, 41, 36, .12), rgba(45, 41, 36, .12)), url('./assets/crime-investigation-bg.png') center 54% / cover no-repeat; content: ''; inset: 0; position: fixed; z-index: -1; }
+.login-page-register { align-items: center; overflow-y: auto; padding-bottom: 2rem; padding-top: 2rem; }
+.login-panel { -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px); background: rgba(244, 240, 232, .44); border: 1px solid rgba(216, 207, 193, .55); border-radius: 14px; box-shadow: 0 .5rem 1.5rem rgba(45, 41, 36, .14); max-width: 27rem; padding: 2.25rem; width: 100%; }
+.login-panel .form-control, .login-panel .form-select { background-color: rgba(255, 255, 255, .84); }
+.login-panel .form-control:focus, .login-panel .form-select:focus { background-color: rgba(255, 255, 255, .94); }
+.login-panel h1 { font-size: clamp(1.55rem, 2.2vw, 2rem); line-height: 1.2; overflow-wrap: break-word; }
+.login-panel .text-secondary { color: var(--color-text) !important; }
+.login-panel .form-text { color: var(--color-primary); }
+.register-panel { max-width: 42rem; }
+.registration-group { border-top: 1px solid var(--color-border); margin-top: 1.5rem; padding-top: 1.25rem; }
+.registration-group-heading { align-items: center; color: var(--color-primary); display: flex; gap: .65rem; margin-bottom: 1rem; }
+.registration-group-heading h2 { font-size: 1rem; font-weight: 750; letter-spacing: -.015em; margin: 0; }
+.registration-group-icon { align-items: center; background: #EFE7DB; border-radius: .5rem; color: var(--color-primary); display: inline-flex; height: 2rem; justify-content: center; width: 2rem; }
 .brand-mark { align-items: center; background: var(--color-primary); border-radius: .65rem; color: #fff; display: inline-flex; font-size: 1.05rem; font-weight: 800; height: 3rem; justify-content: center; letter-spacing: .05em; margin-bottom: 1.5rem; width: 3rem; }
 .brand-mark-small { height: 2.5rem; margin: 0; width: 2.5rem; }
 .eyebrow, .header-kicker { color: var(--color-secondary); font-size: .76rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
@@ -78,7 +96,7 @@ a:hover { color: var(--color-primary-hover); }
 .section-title { font-size: 1.5rem; }
 .stat-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-card); padding: 1.3rem; transition: transform .2s ease, box-shadow .2s ease; }
 .stat-card:hover { box-shadow: 0 .75rem 1.5rem rgba(89, 67, 45, .15); transform: translateY(-3px); }
-.stat-icon { align-items: center; background: #EFE7DB; border-radius: .65rem; color: var(--color-primary); display: inline-flex; font-size: .75rem; font-weight: 800; height: 2.3rem; justify-content: center; letter-spacing: .04em; width: 2.3rem; }
+.stat-icon { align-items: center; background: #EFE7DB; border-radius: .65rem; color: var(--color-primary); display: inline-flex; height: 2.3rem; justify-content: center; width: 2.3rem; }
 .stat-label, .detail-label { color: var(--color-muted); font-size: .86rem; font-weight: 650; margin: 1rem 0 .25rem; }
 .stat-value { color: var(--color-primary); font-size: 2rem; font-weight: 780; line-height: 1.1; margin: 0; }
 .dashboard-state, .page-loader { align-items: center; color: var(--color-muted); display: flex; flex-direction: column; justify-content: center; min-height: 14rem; text-align: center; }
@@ -143,7 +161,7 @@ a:hover { color: var(--color-primary-hover); }
 .sidebar-heading { color: var(--color-accent); font-size: .68rem; font-weight: 800; letter-spacing: .13em; margin: 0 .65rem .65rem; text-transform: uppercase; }
 .sidebar-nav { list-style: none; margin: 0; padding: 0; }
 .sidebar-nav li + li { margin-top: .3rem; }
-.sidebar-link { align-items: center; border-left: .2rem solid transparent; border-radius: .65rem; color: #fff; display: flex; gap: .8rem; min-height: 2.8rem; padding: .65rem .75rem; text-decoration: none; transition: background-color .15s ease, border-color .15s ease; }
+.sidebar-link { align-items: center; border-left: .2rem solid transparent; border-radius: .65rem; color: #fff; display: flex; font-size: .9rem; gap: .8rem; min-height: 2.8rem; padding: .65rem .75rem; text-decoration: none; transition: background-color .15s ease, border-color .15s ease; }
 .sidebar-link:hover { background: rgba(255,255,255,.1); color: #fff; }
 .sidebar-link.active { background: var(--color-secondary); border-left-color: var(--color-accent); color: #fff; font-weight: 700; }
 .sidebar-icon { align-items: center; color: #F7F1E7; display: inline-flex; font-size: 1.1rem; height: 1.3rem; justify-content: center; width: 1.3rem; }
@@ -157,6 +175,21 @@ a:hover { color: var(--color-primary-hover); }
 .dashboard-main .dashboard-header { position: sticky; top: 0; z-index: 1000; }
 .dashboard-main > main { max-width: 100%; }
 
+/* Shared visual rhythm for existing pages and Bootstrap controls. */
+.form-control, .form-select { min-height: 2.7rem; }
+textarea.form-control { min-height: 5rem; }
+.form-text { color: var(--color-muted); }
+.table { --bs-table-color: var(--color-text); }
+.table th, .table td { padding: .8rem .9rem; }
+.card { border-color: var(--color-border); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
+.page-header, .content-header { margin-bottom: 1.5rem; }
+.page-header h1, .content-header h1 { color: var(--color-primary); font-size: clamp(1.5rem, 2vw, 2rem); font-weight: 750; letter-spacing: -.035em; }
+.sidebar-icon svg, .stat-icon svg { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
 @media (max-width: 767.98px) {
   .welcome-card { align-items: flex-start; flex-direction: column; }
   .dashboard-header .container, .welcome-card, .officer-control-panel .row, .criminal-control-panel .row, .fir-control-panel .row { gap: .75rem; }
@@ -165,7 +198,6 @@ a:hover { color: var(--color-primary-hover); }
   .action-stack .btn { width: 100%; }
 }
 @media (max-width: 575.98px) {
-  .login-panel { padding: 1.75rem; }
   .account-badge { width: 100%; }
   .action-stack { grid-template-columns: 1fr; }
   .btn { min-height: 2.5rem; }
@@ -182,4 +214,27 @@ a:hover { color: var(--color-primary-hover); }
   .sidebar-scrim { background: rgba(45, 41, 36, .5); border: 0; display: block; inset: 0; position: fixed; z-index: 1025; }
   .dashboard-main .dashboard-header { padding-left: 2.7rem; }
   .dashboard-mobile-logout { display: none; }
+}
+
+@media (max-width: 991.98px) {
+  .login-page { padding: 2rem; }
+  .login-page-register { padding-bottom: 1.5rem; padding-top: 1.5rem; }
+  .login-panel { padding: 2rem; }
+  .register-panel { max-width: 39rem; }
+}
+
+@media (max-width: 600px) {
+  .login-page { justify-content: center; padding: 16px; }
+  .login-page-register { padding-bottom: 16px; padding-top: 16px; }
+  .login-page::before { background-position: 48% center; }
+  .login-panel { background-color: rgba(244, 240, 232, .54); max-width: 440px; padding: clamp(20px, 5.5vw, 24px); width: 100%; }
+  .login-panel h1 { font-size: clamp(1.4rem, 5.8vw, 1.7rem); overflow-wrap: normal; word-break: normal; }
+  .login-panel .form-control, .login-panel .form-select { max-width: 100%; min-width: 0; }
+  .login-panel .form-control-lg { font-size: 1rem; }
+  .register-panel { max-width: 440px; }
+}
+
+@media (max-width: 600px) and (max-height: 650px) {
+  .login-page { align-items: flex-start; }
+  .login-page-register { align-items: flex-start; }
 }

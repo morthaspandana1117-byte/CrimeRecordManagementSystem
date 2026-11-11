@@ -25,7 +25,7 @@ test('sidebar logout keeps its handler and uses the shared navigation styling an
 
   assert.match(sidebar, /const handleLogout = \(\) => \{\s*logout\(\)\s*navigate\('\/login', \{ replace: true \}\)/)
   assert.match(sidebar, /<button className="sidebar-link sidebar-logout" onClick=\{handleLogout\} type="button">/)
-  assert.match(sidebar, /<svg aria-hidden="true"[\s\S]*?<span>Log out<\/span>/)
+  assert.match(sidebar, /<span className="sidebar-icon" aria-hidden="true">\s*<Icon name="logout" size=\{18\} \/>\s*<\/span>\s*<span>Log out<\/span>/)
   assert.match(styles, /\.sidebar-logout:hover \{ background: rgba\(255,255,255,\.1\); color: #fff; \}/)
   assert.match(styles, /\.sidebar-logout:focus-visible/)
   assert.match(styles, /@media \(max-width: 767\.98px\)[\s\S]*\.dashboard-sidebar-open/)
