@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test --test-concurrency=1",
     "seed:admin": "node scripts/seedAdmin.js",
-    "migrate:ranks": "node scripts/migrateOfficerRanks.js"
+    "migrate:ranks": "node scripts/migrateOfficerRanks.js",
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
